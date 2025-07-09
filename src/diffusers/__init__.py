@@ -1,4 +1,4 @@
-__version__ = "0.34.0.dev0"
+__version__ = "0.35.0.dev0"
 
 from typing import TYPE_CHECKING
 
@@ -133,9 +133,11 @@ else:
     _import_structure["hooks"].extend(
         [
             "FasterCacheConfig",
+            "FirstBlockCacheConfig",
             "HookRegistry",
             "PyramidAttentionBroadcastConfig",
             "apply_faster_cache",
+            "apply_first_block_cache",
             "apply_pyramid_attention_broadcast",
         ]
     )
@@ -159,6 +161,7 @@ else:
             "AutoencoderTiny",
             "AutoModel",
             "CacheMixin",
+            "ChromaTransformer2DModel",
             "CogVideoXTransformer3DModel",
             "CogView3PlusTransformer2DModel",
             "CogView4Transformer2DModel",
@@ -352,6 +355,8 @@ else:
             "AuraFlowPipeline",
             "BlipDiffusionControlNetPipeline",
             "BlipDiffusionPipeline",
+            "ChromaImg2ImgPipeline",
+            "ChromaPipeline",
             "CLIPImageProjection",
             "CogVideoXFunControlPipeline",
             "CogVideoXImageToVideoPipeline",
@@ -361,6 +366,8 @@ else:
             "CogView4ControlPipeline",
             "CogView4Pipeline",
             "ConsisIDPipeline",
+            "Cosmos2TextToImagePipeline",
+            "Cosmos2VideoToWorldPipeline",
             "CosmosTextToWorldPipeline",
             "CosmosVideoToWorldPipeline",
             "CycleDiffusionPipeline",
@@ -376,6 +383,8 @@ else:
             "FluxFillPipeline",
             "FluxImg2ImgPipeline",
             "FluxInpaintPipeline",
+            "FluxKontextInpaintPipeline",
+            "FluxKontextPipeline",
             "FluxPipeline",
             "FluxPriorReduxPipeline",
             "HiDreamImagePipeline",
@@ -744,9 +753,11 @@ if TYPE_CHECKING or DIFFUSERS_SLOW_IMPORT:
     else:
         from .hooks import (
             FasterCacheConfig,
+            FirstBlockCacheConfig,
             HookRegistry,
             PyramidAttentionBroadcastConfig,
             apply_faster_cache,
+            apply_first_block_cache,
             apply_pyramid_attention_broadcast,
         )
         from .models import (
@@ -768,6 +779,7 @@ if TYPE_CHECKING or DIFFUSERS_SLOW_IMPORT:
             AutoencoderTiny,
             AutoModel,
             CacheMixin,
+            ChromaTransformer2DModel,
             CogVideoXTransformer3DModel,
             CogView3PlusTransformer2DModel,
             CogView4Transformer2DModel,
@@ -940,6 +952,8 @@ if TYPE_CHECKING or DIFFUSERS_SLOW_IMPORT:
             AudioLDM2UNet2DConditionModel,
             AudioLDMPipeline,
             AuraFlowPipeline,
+            ChromaImg2ImgPipeline,
+            ChromaPipeline,
             CLIPImageProjection,
             CogVideoXFunControlPipeline,
             CogVideoXImageToVideoPipeline,
@@ -949,6 +963,8 @@ if TYPE_CHECKING or DIFFUSERS_SLOW_IMPORT:
             CogView4ControlPipeline,
             CogView4Pipeline,
             ConsisIDPipeline,
+            Cosmos2TextToImagePipeline,
+            Cosmos2VideoToWorldPipeline,
             CosmosTextToWorldPipeline,
             CosmosVideoToWorldPipeline,
             CycleDiffusionPipeline,
@@ -964,6 +980,8 @@ if TYPE_CHECKING or DIFFUSERS_SLOW_IMPORT:
             FluxFillPipeline,
             FluxImg2ImgPipeline,
             FluxInpaintPipeline,
+            FluxKontextInpaintPipeline,
+            FluxKontextPipeline,
             FluxPipeline,
             FluxPriorReduxPipeline,
             HiDreamImagePipeline,

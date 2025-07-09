@@ -133,6 +133,29 @@ def numpy_cosine_similarity_distance(a, b):
     return distance
 
 
+def check_if_dicts_are_equal(dict1, dict2):
+    dict1, dict2 = dict1.copy(), dict2.copy()
+
+    for key, value in dict1.items():
+        if isinstance(value, set):
+            dict1[key] = sorted(value)
+    for key, value in dict2.items():
+        if isinstance(value, set):
+            dict2[key] = sorted(value)
+
+    for key in dict1:
+        if key not in dict2:
+            return False
+        if dict1[key] != dict2[key]:
+            return False
+
+    for key in dict2:
+        if key not in dict1:
+            return False
+
+    return True
+
+
 def print_tensor_test(
     tensor,
     limit_to_slices=None,
@@ -291,6 +314,18 @@ def require_torch_version_greater_equal(torch_version):
     return decorator
 
 
+def require_torch_version_greater(torch_version):
+    """Decorator marking a test that requires torch with a specific version greater."""
+
+    def decorator(test_case):
+        correct_torch_version = is_torch_available() and is_torch_version(">", torch_version)
+        return unittest.skipUnless(
+            correct_torch_version, f"test requires torch with the version greater than {torch_version}"
+        )(test_case)
+
+    return decorator
+
+
 def require_torch_gpu(test_case):
     """Decorator marking a test that requires CUDA and PyTorch."""
     return unittest.skipUnless(is_torch_available() and torch_device == "cuda", "test requires PyTorch+CUDA")(
@@ -300,9 +335,7 @@ def require_torch_gpu(test_case):
 
 def require_torch_cuda_compatibility(expected_compute_capability):
     def decorator(test_case):
-        if not torch.cuda.is_available():
-            return unittest.skip(test_case)
-        else:
+        if torch.cuda.is_available():
             current_compute_capability = get_torch_cuda_device_capability()
             return unittest.skipUnless(
                 float(current_compute_capability) == float(expected_compute_capability),
@@ -388,6 +421,10 @@ def require_big_accelerator(test_case):
     Decorator marking a test that requires a bigger hardware accelerator (24GB) for execution. Some example pipelines:
     Flux, SD3, Cog, etc.
     """
+    import pytest
+
+    test_case = pytest.mark.big_accelerator(test_case)
+
     if not is_torch_available():
         return unittest.skip("test requires PyTorch")(test_case)
 
@@ -957,10 +994,10 @@ def pytest_terminal_summary_main(tr, id):
     config.option.tbstyle = orig_tbstyle
 
 
-# Copied from https://github.com/huggingface/transformers/blob/000e52aec8850d3fe2f360adc6fd256e5b47fe4c/src/transformers/testing_utils.py#L1905
+# Adapted from https://github.com/huggingface/transformers/blob/000e52aec8850d3fe2f360adc6fd256e5b47fe4c/src/transformers/testing_utils.py#L1905
 def is_flaky(max_attempts: int = 5, wait_before_retry: Optional[float] = None, description: Optional[str] = None):
     """
-    To decorate flaky tests. They will be retried on failures.
+    To decorate flaky tests (methods or entire classes). They will be retried on failures.
 
     Args:
         max_attempts (`int`, *optional*, defaults to 5):
@@ -972,22 +1009,33 @@ def is_flaky(max_attempts: int = 5, wait_before_retry: Optional[float] = None, d
             etc.)
     """
 
-    def decorator(test_func_ref):
-        @functools.wraps(test_func_ref)
+    def decorator(obj):
+        # If decorating a class, wrap each test method on it
+        if inspect.isclass(obj):
+            for attr_name, attr_value in list(obj.__dict__.items()):
+                if callable(attr_value) and attr_name.startswith("test"):
+                    # recursively decorate the method
+                    setattr(obj, attr_name, decorator(attr_value))
+            return obj
+
+        # Otherwise we're decorating a single test function / method
+        @functools.wraps(obj)
         def wrapper(*args, **kwargs):
             retry_count = 1
-
             while retry_count < max_attempts:
                 try:
-                    return test_func_ref(*args, **kwargs)
-
+                    return obj(*args, **kwargs)
                 except Exception as err:
-                    print(f"Test failed with {err} at try {retry_count}/{max_attempts}.", file=sys.stderr)
+                    msg = (
+                        f"[FLAKY] {description or obj.__name__!r} "
+                        f"failed on attempt {retry_count}/{max_attempts}: {err}"
+                    )
+                    print(msg, file=sys.stderr)
                     if wait_before_retry is not None:
                         time.sleep(wait_before_retry)
                     retry_count += 1
 
-            return test_func_ref(*args, **kwargs)
+            return obj(*args, **kwargs)
 
         return wrapper
 
