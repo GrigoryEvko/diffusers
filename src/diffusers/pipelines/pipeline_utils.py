@@ -650,6 +650,11 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
                 If `True`, temporarily offloads the CPU state dict to the hard drive to avoid running out of CPU RAM if
                 the weight of the CPU state dict + the biggest shard of the checkpoint does not fit. Defaults to `True`
                 when there is some disk offload.
+            low_cpu_mem_usage (`bool`, *optional*, defaults to `True` if torch version >= 1.9.0 else `False`):
+                Speed up model loading only loading the pretrained weights and not initializing the weights. This also
+                tries to not use more than 1x model size in CPU memory (including peak memory) while loading the model.
+                Only supported for PyTorch >= 1.9.0. If you are using an older version of PyTorch, setting this
+                argument to `True` will raise an error.
             use_safetensors (`bool`, *optional*, defaults to `None`):
                 If set to `None`, the safetensors weights are downloaded if they're available **and** if the
                 safetensors library is installed. If set to `True`, the model is forcibly loaded from safetensors
@@ -713,8 +718,6 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
         sess_options = kwargs.pop("sess_options", None)
         provider_options = kwargs.pop("provider_options", None)
         device_map = kwargs.pop("device_map", None)
-        # Store original device_map for suggestion logic
-        original_device_map_for_suggestion = device_map
         max_memory = kwargs.pop("max_memory", None)
         offload_folder = kwargs.pop("offload_folder", None)
         offload_state_dict = kwargs.pop("offload_state_dict", None)
@@ -1099,11 +1102,11 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
                     else:
                         device_summary.append(f"{comp_name}: cpu")
                 logger.info(f"Pipeline loaded with device_map: {{{', '.join(device_summary)}}}")
-        
+
         # Suggest device mapping if device_map was None
         # Check if this is a Flax pipeline using pipeline class name
         is_flax_pipeline = "Flax" in pipeline_class.__name__
-        if original_device_map_for_suggestion is None and not is_flax_pipeline:
+        if device_map is None and not is_flax_pipeline:
             try:
                 # Check for available accelerator devices
                 available_devices = []
@@ -1134,7 +1137,7 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
                         for i, (comp_name, _) in enumerate(sorted_components):
                             device_idx = i % len(available_devices)
                             device_map_suggestion[comp_name] = available_devices[device_idx]
-                        
+
                         logger.info("💡 For memory-efficient loading across multiple devices, consider using device mapping:")
                         logger.info(f"   device_map={device_map_suggestion}")
                         logger.info(f"   Example: {pipeline_class.__name__}.from_pretrained('{pretrained_model_name_or_path}', device_map={device_map_suggestion})")
@@ -1143,7 +1146,7 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
                 print(f"Device map suggestion error: {e}")
                 import traceback
                 traceback.print_exc()
-        
+
         return model
 
     @property
@@ -1382,11 +1385,7 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
 
     def reset_device_map(self):
         r"""
-        Resets the device maps and moves all components to CPU.
-
-        This is useful when you want to use other offloading methods like
-        enable_sequential_cpu_offload() or enable_model_cpu_offload() after
-        loading with device_map.
+        Resets the device maps (if any) to None.
         """
         if self.hf_device_map is None:
             logger.info("No device_map to reset")
@@ -1398,7 +1397,6 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
         for name, component in self.components.items():
             if isinstance(component, torch.nn.Module):
                 component.to("cpu")
-                logger.debug(f"Moved {name} to CPU")
 
         self.hf_device_map = None
 
