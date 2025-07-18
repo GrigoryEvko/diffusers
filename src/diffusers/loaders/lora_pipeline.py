@@ -310,6 +310,9 @@ class StableDiffusionLoraLoaderMixin(LoraBaseMixin):
             allow_pickle = True
 
         user_agent = {"file_type": "attn_procs_weights", "framework": "pytorch"}
+        
+        # Get device parameter from kwargs if provided
+        device = kwargs.pop("device", None)
 
         state_dict, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
@@ -324,6 +327,7 @@ class StableDiffusionLoraLoaderMixin(LoraBaseMixin):
             subfolder=subfolder,
             user_agent=user_agent,
             allow_pickle=allow_pickle,
+            device=device,
         )
         is_dora_scale_present = any("dora_scale" in k for k in state_dict)
         if is_dora_scale_present:
@@ -795,6 +799,9 @@ class StableDiffusionXLLoraLoaderMixin(LoraBaseMixin):
             allow_pickle = True
 
         user_agent = {"file_type": "attn_procs_weights", "framework": "pytorch"}
+        
+        # Get device parameter from kwargs if provided
+        device = kwargs.pop("device", None)
 
         state_dict, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
@@ -809,6 +816,7 @@ class StableDiffusionXLLoraLoaderMixin(LoraBaseMixin):
             subfolder=subfolder,
             user_agent=user_agent,
             allow_pickle=allow_pickle,
+            device=device,
         )
         is_dora_scale_present = any("dora_scale" in k for k in state_dict)
         if is_dora_scale_present:
@@ -1197,6 +1205,9 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
             allow_pickle = True
 
         user_agent = {"file_type": "attn_procs_weights", "framework": "pytorch"}
+        
+        # Get device parameter from kwargs if provided
+        device = kwargs.pop("device", None)
 
         state_dict, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
@@ -1211,6 +1222,7 @@ class SD3LoraLoaderMixin(LoraBaseMixin):
             subfolder=subfolder,
             user_agent=user_agent,
             allow_pickle=allow_pickle,
+            device=device,
         )
 
         is_dora_scale_present = any("dora_scale" in k for k in state_dict)
@@ -1660,6 +1672,9 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
             allow_pickle = True
 
         user_agent = {"file_type": "attn_procs_weights", "framework": "pytorch"}
+        
+        # Get device parameter from kwargs if provided
+        device = kwargs.pop("device", None)
 
         state_dict, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
@@ -1674,6 +1689,7 @@ class AuraFlowLoraLoaderMixin(LoraBaseMixin):
             subfolder=subfolder,
             user_agent=user_agent,
             allow_pickle=allow_pickle,
+            device=device,
         )
 
         is_dora_scale_present = any("dora_scale" in k for k in state_dict)
@@ -2006,6 +2022,9 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
             allow_pickle = True
 
         user_agent = {"file_type": "attn_procs_weights", "framework": "pytorch"}
+        
+        # Get device parameter from kwargs if provided
+        device = kwargs.pop("device", None)
 
         state_dict, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
@@ -2020,6 +2039,7 @@ class FluxLoraLoaderMixin(LoraBaseMixin):
             subfolder=subfolder,
             user_agent=user_agent,
             allow_pickle=allow_pickle,
+            device=device,
         )
         is_dora_scale_present = any("dora_scale" in k for k in state_dict)
         if is_dora_scale_present:
@@ -3085,6 +3105,9 @@ class CogVideoXLoraLoaderMixin(LoraBaseMixin):
             allow_pickle = True
 
         user_agent = {"file_type": "attn_procs_weights", "framework": "pytorch"}
+        
+        # Get device parameter from kwargs if provided
+        device = kwargs.pop("device", None)
 
         state_dict, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
@@ -3099,6 +3122,7 @@ class CogVideoXLoraLoaderMixin(LoraBaseMixin):
             subfolder=subfolder,
             user_agent=user_agent,
             allow_pickle=allow_pickle,
+            device=device,
         )
 
         is_dora_scale_present = any("dora_scale" in k for k in state_dict)
@@ -3424,6 +3448,9 @@ class Mochi1LoraLoaderMixin(LoraBaseMixin):
             allow_pickle = True
 
         user_agent = {"file_type": "attn_procs_weights", "framework": "pytorch"}
+        
+        # Get device parameter from kwargs if provided
+        device = kwargs.pop("device", None)
 
         state_dict, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
@@ -3438,6 +3465,7 @@ class Mochi1LoraLoaderMixin(LoraBaseMixin):
             subfolder=subfolder,
             user_agent=user_agent,
             allow_pickle=allow_pickle,
+            device=device,
         )
 
         is_dora_scale_present = any("dora_scale" in k for k in state_dict)
@@ -3764,6 +3792,9 @@ class LTXVideoLoraLoaderMixin(LoraBaseMixin):
             allow_pickle = True
 
         user_agent = {"file_type": "attn_procs_weights", "framework": "pytorch"}
+        
+        # Get device parameter from kwargs if provided
+        device = kwargs.pop("device", None)
 
         state_dict, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
@@ -3778,6 +3809,7 @@ class LTXVideoLoraLoaderMixin(LoraBaseMixin):
             subfolder=subfolder,
             user_agent=user_agent,
             allow_pickle=allow_pickle,
+            device=device,
         )
 
         is_dora_scale_present = any("dora_scale" in k for k in state_dict)
@@ -4110,6 +4142,9 @@ class SanaLoraLoaderMixin(LoraBaseMixin):
             allow_pickle = True
 
         user_agent = {"file_type": "attn_procs_weights", "framework": "pytorch"}
+        
+        # Get device parameter from kwargs if provided
+        device = kwargs.pop("device", None)
 
         state_dict, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
@@ -4124,6 +4159,7 @@ class SanaLoraLoaderMixin(LoraBaseMixin):
             subfolder=subfolder,
             user_agent=user_agent,
             allow_pickle=allow_pickle,
+            device=device,
         )
 
         is_dora_scale_present = any("dora_scale" in k for k in state_dict)
@@ -4450,6 +4486,9 @@ class HunyuanVideoLoraLoaderMixin(LoraBaseMixin):
             allow_pickle = True
 
         user_agent = {"file_type": "attn_procs_weights", "framework": "pytorch"}
+        
+        # Get device parameter from kwargs if provided
+        device = kwargs.pop("device", None)
 
         state_dict, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
@@ -4464,6 +4503,7 @@ class HunyuanVideoLoraLoaderMixin(LoraBaseMixin):
             subfolder=subfolder,
             user_agent=user_agent,
             allow_pickle=allow_pickle,
+            device=device,
         )
 
         is_dora_scale_present = any("dora_scale" in k for k in state_dict)
@@ -4794,6 +4834,9 @@ class Lumina2LoraLoaderMixin(LoraBaseMixin):
             allow_pickle = True
 
         user_agent = {"file_type": "attn_procs_weights", "framework": "pytorch"}
+        
+        # Get device parameter from kwargs if provided
+        device = kwargs.pop("device", None)
 
         state_dict, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
@@ -4808,6 +4851,7 @@ class Lumina2LoraLoaderMixin(LoraBaseMixin):
             subfolder=subfolder,
             user_agent=user_agent,
             allow_pickle=allow_pickle,
+            device=device,
         )
 
         is_dora_scale_present = any("dora_scale" in k for k in state_dict)
@@ -5139,6 +5183,9 @@ class WanLoraLoaderMixin(LoraBaseMixin):
             allow_pickle = True
 
         user_agent = {"file_type": "attn_procs_weights", "framework": "pytorch"}
+        
+        # Get device parameter from kwargs if provided
+        device = kwargs.pop("device", None)
 
         state_dict, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
@@ -5153,6 +5200,7 @@ class WanLoraLoaderMixin(LoraBaseMixin):
             subfolder=subfolder,
             user_agent=user_agent,
             allow_pickle=allow_pickle,
+            device=device,
         )
         if any(k.startswith("diffusion_model.") for k in state_dict):
             state_dict = _convert_non_diffusers_wan_lora_to_diffusers(state_dict)
@@ -5536,6 +5584,9 @@ class CogView4LoraLoaderMixin(LoraBaseMixin):
             allow_pickle = True
 
         user_agent = {"file_type": "attn_procs_weights", "framework": "pytorch"}
+        
+        # Get device parameter from kwargs if provided
+        device = kwargs.pop("device", None)
 
         state_dict, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
@@ -5550,6 +5601,7 @@ class CogView4LoraLoaderMixin(LoraBaseMixin):
             subfolder=subfolder,
             user_agent=user_agent,
             allow_pickle=allow_pickle,
+            device=device,
         )
 
         is_dora_scale_present = any("dora_scale" in k for k in state_dict)
@@ -5876,6 +5928,9 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
             allow_pickle = True
 
         user_agent = {"file_type": "attn_procs_weights", "framework": "pytorch"}
+        
+        # Get device parameter from kwargs if provided
+        device = kwargs.pop("device", None)
 
         state_dict, metadata = _fetch_state_dict(
             pretrained_model_name_or_path_or_dict=pretrained_model_name_or_path_or_dict,
@@ -5890,6 +5945,7 @@ class HiDreamImageLoraLoaderMixin(LoraBaseMixin):
             subfolder=subfolder,
             user_agent=user_agent,
             allow_pickle=allow_pickle,
+            device=device,
         )
 
         is_dora_scale_present = any("dora_scale" in k for k in state_dict)

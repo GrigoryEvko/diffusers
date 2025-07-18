@@ -209,6 +209,7 @@ def _fetch_state_dict(
     user_agent,
     allow_pickle,
     metadata=None,
+    device=None,
 ):
     model_file = None
     if not isinstance(pretrained_model_name_or_path_or_dict, dict):
@@ -238,7 +239,7 @@ def _fetch_state_dict(
                     subfolder=subfolder,
                     user_agent=user_agent,
                 )
-                state_dict = safetensors.torch.load_file(model_file, device="cpu")
+                state_dict = safetensors.torch.load_file(model_file, device=device or "cpu")
                 metadata = _load_sft_state_dict_metadata(model_file)
 
             except (IOError, safetensors.SafetensorError) as e:
@@ -266,7 +267,7 @@ def _fetch_state_dict(
                 subfolder=subfolder,
                 user_agent=user_agent,
             )
-            state_dict = load_state_dict(model_file)
+            state_dict = load_state_dict(model_file, map_location=device or "cpu")
             metadata = None
     else:
         state_dict = pretrained_model_name_or_path_or_dict
