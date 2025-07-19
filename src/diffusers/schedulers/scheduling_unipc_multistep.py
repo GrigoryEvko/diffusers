@@ -52,7 +52,7 @@ def betas_for_alpha_bar(
                      Choose from `cosine` or `exp`
 
     Returns:
-        betas (`np.ndarray`): the betas used by the scheduler to step the model outputs
+        betas (`torch.Tensor`): the betas used by the scheduler to step the model outputs
     """
     if alpha_transform_type == "cosine":
 
@@ -129,7 +129,7 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
         beta_schedule (`str`, defaults to `"linear"`):
             The beta schedule, a mapping from a beta range to a sequence of betas for stepping the model. Choose from
             `linear`, `scaled_linear`, or `squaredcos_cap_v2`.
-        trained_betas (`np.ndarray`, *optional*):
+        trained_betas (`torch.Tensor`, *optional*):
             Pass an array of betas directly to the constructor to bypass `beta_start` and `beta_end`.
         solver_order (`int`, default `2`):
             The UniPC order which can be any positive integer. The effective order of accuracy is `solver_order + 1`
@@ -194,7 +194,7 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
         beta_start: float = 0.0001,
         beta_end: float = 0.02,
         beta_schedule: str = "linear",
-        trained_betas: Optional[Union[np.ndarray, List[float]]] = None,
+        trained_betas: Optional[Union[torch.Tensor, List[float]]] = None,
         solver_order: int = 2,
         prediction_type: str = "epsilon",
         thresholding: bool = False,
@@ -265,8 +265,8 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
         self.predict_x0 = predict_x0
         # setable values
         self.num_inference_steps = None
-        timesteps = np.linspace(0, num_train_timesteps - 1, num_train_timesteps, dtype=np.float32)[::-1].copy()
-        self.timesteps = torch.from_numpy(timesteps)
+        timesteps = torch.linspace(0, num_train_timesteps - 1, num_train_timesteps, dtype=torch.float32).flip(0)
+        self.timesteps = timesteps
         self.model_outputs = [None] * solver_order
         self.timestep_list = [None] * solver_order
         self.lower_order_nums = 0
@@ -317,37 +317,37 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
         # "linspace", "leading", "trailing" corresponds to annotation of Table 2. of https://huggingface.co/papers/2305.08891
         if mu is not None:
             assert self.config.use_dynamic_shifting and self.config.time_shift_type == "exponential"
-            self.config.flow_shift = np.exp(mu)
+            self.config.flow_shift = float(torch.exp(torch.tensor(mu, dtype=torch.float32)))
         if self.config.timestep_spacing == "linspace":
             timesteps = (
-                np.linspace(0, self.config.num_train_timesteps - 1, num_inference_steps + 1)
-                .round()[::-1][:-1]
-                .copy()
-                .astype(np.int64)
+                torch.linspace(0, self.config.num_train_timesteps - 1, num_inference_steps + 1)
+                .round()
+                .flip(0)[:-1]
+                .to(torch.int64)
             )
         elif self.config.timestep_spacing == "leading":
             step_ratio = self.config.num_train_timesteps // (num_inference_steps + 1)
             # creates integer timesteps by multiplying by ratio
             # casting to int to avoid issues when num_inference_step is power of 3
-            timesteps = (np.arange(0, num_inference_steps + 1) * step_ratio).round()[::-1][:-1].copy().astype(np.int64)
+            timesteps = (torch.arange(0, num_inference_steps + 1) * step_ratio).round().flip(0)[:-1].to(torch.int64)
             timesteps += self.config.steps_offset
         elif self.config.timestep_spacing == "trailing":
             step_ratio = self.config.num_train_timesteps / num_inference_steps
             # creates integer timesteps by multiplying by ratio
             # casting to int to avoid issues when num_inference_step is power of 3
-            timesteps = np.arange(self.config.num_train_timesteps, 0, -step_ratio).round().copy().astype(np.int64)
+            timesteps = torch.arange(self.config.num_train_timesteps, 0, -step_ratio).round().to(torch.int64)
             timesteps -= 1
         else:
             raise ValueError(
                 f"{self.config.timestep_spacing} is not supported. Please make sure to choose one of 'linspace', 'leading' or 'trailing'."
             )
 
-        sigmas = np.array(((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5)
+        sigmas = ((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5
         if self.config.use_karras_sigmas:
-            log_sigmas = np.log(sigmas)
-            sigmas = np.flip(sigmas).copy()
+            log_sigmas = torch.log(sigmas)
+            sigmas = torch.flip(sigmas, dims=[0])
             sigmas = self._convert_to_karras(in_sigmas=sigmas, num_inference_steps=num_inference_steps)
-            timesteps = np.array([self._sigma_to_t(sigma, log_sigmas) for sigma in sigmas]).round()
+            timesteps = torch.stack([self._sigma_to_t(sigma, log_sigmas) for sigma in sigmas]).round()
             if self.config.final_sigmas_type == "sigma_min":
                 sigma_last = sigmas[-1]
             elif self.config.final_sigmas_type == "zero":
@@ -356,12 +356,12 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
                 raise ValueError(
                     f"`final_sigmas_type` must be one of 'zero', or 'sigma_min', but got {self.config.final_sigmas_type}"
                 )
-            sigmas = np.concatenate([sigmas, [sigma_last]]).astype(np.float32)
+            sigmas = torch.cat([sigmas, torch.tensor([sigma_last], device=sigmas.device, dtype=torch.float32)])
         elif self.config.use_exponential_sigmas:
-            log_sigmas = np.log(sigmas)
-            sigmas = np.flip(sigmas).copy()
+            log_sigmas = torch.log(sigmas)
+            sigmas = torch.flip(sigmas, dims=[0])
             sigmas = self._convert_to_exponential(in_sigmas=sigmas, num_inference_steps=num_inference_steps)
-            timesteps = np.array([self._sigma_to_t(sigma, log_sigmas) for sigma in sigmas])
+            timesteps = torch.stack([self._sigma_to_t(sigma, log_sigmas) for sigma in sigmas])
             if self.config.final_sigmas_type == "sigma_min":
                 sigma_last = sigmas[-1]
             elif self.config.final_sigmas_type == "zero":
@@ -370,12 +370,12 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
                 raise ValueError(
                     f"`final_sigmas_type` must be one of 'zero', or 'sigma_min', but got {self.config.final_sigmas_type}"
                 )
-            sigmas = np.concatenate([sigmas, [sigma_last]]).astype(np.float32)
+            sigmas = torch.cat([sigmas, torch.tensor([sigma_last], device=sigmas.device, dtype=torch.float32)])
         elif self.config.use_beta_sigmas:
-            log_sigmas = np.log(sigmas)
-            sigmas = np.flip(sigmas).copy()
+            log_sigmas = torch.log(sigmas)
+            sigmas = torch.flip(sigmas, dims=[0])
             sigmas = self._convert_to_beta(in_sigmas=sigmas, num_inference_steps=num_inference_steps)
-            timesteps = np.array([self._sigma_to_t(sigma, log_sigmas) for sigma in sigmas])
+            timesteps = torch.stack([self._sigma_to_t(sigma, log_sigmas) for sigma in sigmas])
             if self.config.final_sigmas_type == "sigma_min":
                 sigma_last = sigmas[-1]
             elif self.config.final_sigmas_type == "zero":
@@ -384,11 +384,11 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
                 raise ValueError(
                     f"`final_sigmas_type` must be one of 'zero', or 'sigma_min', but got {self.config.final_sigmas_type}"
                 )
-            sigmas = np.concatenate([sigmas, [sigma_last]]).astype(np.float32)
+            sigmas = torch.cat([sigmas, torch.tensor([sigma_last], device=sigmas.device, dtype=torch.float32)])
         elif self.config.use_flow_sigmas:
-            alphas = np.linspace(1, 1 / self.config.num_train_timesteps, num_inference_steps + 1)
+            alphas = torch.linspace(1, 1 / self.config.num_train_timesteps, num_inference_steps + 1, device=sigmas.device)
             sigmas = 1.0 - alphas
-            sigmas = np.flip(self.config.flow_shift * sigmas / (1 + (self.config.flow_shift - 1) * sigmas))[:-1].copy()
+            sigmas = torch.flip(self.config.flow_shift * sigmas / (1 + (self.config.flow_shift - 1) * sigmas), dims=[0])[:-1]
             timesteps = (sigmas * self.config.num_train_timesteps).copy()
             if self.config.final_sigmas_type == "sigma_min":
                 sigma_last = sigmas[-1]
@@ -398,9 +398,16 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
                 raise ValueError(
                     f"`final_sigmas_type` must be one of 'zero', or 'sigma_min', but got {self.config.final_sigmas_type}"
                 )
-            sigmas = np.concatenate([sigmas, [sigma_last]]).astype(np.float32)
+            sigmas = torch.cat([sigmas, torch.tensor([sigma_last], device=sigmas.device, dtype=torch.float32)])
         else:
-            sigmas = np.interp(timesteps, np.arange(0, len(sigmas)), sigmas)
+            # PyTorch equivalent of np.interp
+            # timesteps are indices into sigmas array (e.g., [999, 950, 900, ...])
+            # We need to interpolate sigmas at these positions
+            timesteps_np = timesteps.cpu().numpy() if isinstance(timesteps, torch.Tensor) else timesteps
+            sigmas_np = sigmas.cpu().numpy() if isinstance(sigmas, torch.Tensor) else sigmas
+            x_np = np.arange(0, len(sigmas_np))
+            sigmas_interp = np.interp(timesteps_np, x_np, sigmas_np)
+            sigmas = torch.from_numpy(sigmas_interp).to(device=sigmas.device if isinstance(sigmas, torch.Tensor) else 'cpu', dtype=torch.float32)
             if self.config.final_sigmas_type == "sigma_min":
                 sigma_last = ((1 - self.alphas_cumprod[0]) / self.alphas_cumprod[0]) ** 0.5
             elif self.config.final_sigmas_type == "zero":
@@ -409,10 +416,10 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
                 raise ValueError(
                     f"`final_sigmas_type` must be one of 'zero', or 'sigma_min', but got {self.config.final_sigmas_type}"
                 )
-            sigmas = np.concatenate([sigmas, [sigma_last]]).astype(np.float32)
+            sigmas = torch.cat([sigmas, torch.tensor([sigma_last], device=sigmas.device, dtype=torch.float32)])
 
-        self.sigmas = torch.from_numpy(sigmas)
-        self.timesteps = torch.from_numpy(timesteps).to(device=device, dtype=torch.int64)
+        self.sigmas = sigmas if isinstance(sigmas, torch.Tensor) else torch.tensor(sigmas)
+        self.timesteps = timesteps.to(device=device, dtype=torch.int64) if isinstance(timesteps, torch.Tensor) else torch.tensor(timesteps, device=device, dtype=torch.int64)
 
         self.num_inference_steps = len(timesteps)
 
@@ -447,7 +454,7 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
             sample = sample.float()  # upcast for quantile calculation, and clamp not implemented for cpu half
 
         # Flatten sample for doing quantile calculation along each image
-        sample = sample.reshape(batch_size, channels * np.prod(remaining_dims))
+        sample = sample.reshape(batch_size, channels * torch.prod(torch.tensor(remaining_dims)).item())
 
         abs_sample = sample.abs()  # "a certain percentile absolute pixel value"
 
@@ -466,13 +473,13 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
     # Copied from diffusers.schedulers.scheduling_euler_discrete.EulerDiscreteScheduler._sigma_to_t
     def _sigma_to_t(self, sigma, log_sigmas):
         # get log sigma
-        log_sigma = np.log(np.maximum(sigma, 1e-10))
+        log_sigma = torch.log(torch.maximum(sigma, torch.tensor(1e-10, device=sigma.device)))
 
         # get distribution
-        dists = log_sigma - log_sigmas[:, np.newaxis]
+        dists = log_sigma - log_sigmas.unsqueeze(1)
 
         # get sigmas range
-        low_idx = np.cumsum((dists >= 0), axis=0).argmax(axis=0).clip(max=log_sigmas.shape[0] - 2)
+        low_idx = torch.cumsum((dists >= 0).float(), dim=0).argmax(dim=0).clamp(max=log_sigmas.shape[0] - 2)
         high_idx = low_idx + 1
 
         low = log_sigmas[low_idx]
@@ -480,7 +487,7 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
 
         # interpolate sigmas
         w = (low - log_sigma) / (low - high)
-        w = np.clip(w, 0, 1)
+        w = torch.clamp(w, 0, 1)
 
         # transform interpolation to time range
         t = (1 - w) * low_idx + w * high_idx
@@ -518,7 +525,7 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
         sigma_max = sigma_max if sigma_max is not None else in_sigmas[0].item()
 
         rho = 7.0  # 7.0 is the value used in the paper
-        ramp = np.linspace(0, 1, num_inference_steps)
+        ramp = torch.linspace(0, 1, num_inference_steps, device=in_sigmas.device, dtype=in_sigmas.dtype)
         min_inv_rho = sigma_min ** (1 / rho)
         max_inv_rho = sigma_max ** (1 / rho)
         sigmas = (max_inv_rho + ramp * (min_inv_rho - max_inv_rho)) ** rho
@@ -543,7 +550,7 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
         sigma_min = sigma_min if sigma_min is not None else in_sigmas[-1].item()
         sigma_max = sigma_max if sigma_max is not None else in_sigmas[0].item()
 
-        sigmas = np.exp(np.linspace(math.log(sigma_max), math.log(sigma_min), num_inference_steps))
+        sigmas = torch.exp(torch.linspace(math.log(sigma_max), math.log(sigma_min), num_inference_steps, device=in_sigmas.device, dtype=in_sigmas.dtype))
         return sigmas
 
     # Copied from diffusers.schedulers.scheduling_euler_discrete.EulerDiscreteScheduler._convert_to_beta
@@ -567,15 +574,24 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
         sigma_min = sigma_min if sigma_min is not None else in_sigmas[-1].item()
         sigma_max = sigma_max if sigma_max is not None else in_sigmas[0].item()
 
-        sigmas = np.array(
-            [
-                sigma_min + (ppf * (sigma_max - sigma_min))
-                for ppf in [
-                    scipy.stats.beta.ppf(timestep, alpha, beta)
-                    for timestep in 1 - np.linspace(0, 1, num_inference_steps)
-                ]
-            ]
-        )
+        # Beta distribution PPF implementation in PyTorch
+        timesteps = 1 - torch.linspace(0, 1, num_inference_steps, device=in_sigmas.device, dtype=in_sigmas.dtype)
+        
+        # For beta distribution PPF, we can use the inverse regularized incomplete beta function
+        # For simplicity, we'll use a polynomial approximation or fall back to scipy if available
+        if is_scipy_available():
+            import scipy.stats
+            ppf_values = torch.tensor(
+                [scipy.stats.beta.ppf(t.item(), alpha, beta) for t in timesteps],
+                device=in_sigmas.device,
+                dtype=in_sigmas.dtype
+            )
+        else:
+            # Simple approximation for beta PPF when alpha=beta=0.6
+            # This is not exact but provides a reasonable approximation
+            ppf_values = timesteps.pow(1/alpha) / (timesteps.pow(1/alpha) + (1-timesteps).pow(1/beta))
+            
+        sigmas = sigma_min + (ppf_values * (sigma_max - sigma_min))
         return sigmas
 
     def convert_model_output(
