@@ -71,8 +71,12 @@ from .model_loading_utils import (
     _expand_device_map,
     _fetch_index_file,
     _fetch_index_file_legacy,
+    _find_mismatched_keys,
     _load_shard_file,
     _load_shard_files_with_threadpool,
+    _load_state_dict_into_model,
+    check_support_param_buffer_assignment,
+    load_model_dict_into_meta,
     load_state_dict,
 )
 
@@ -1616,30 +1620,6 @@ class ModelMixin(torch.nn.Module, PushToHubMixin):
                 # Determine the device to load weights to based on device_map
                 load_device = _get_load_device_from_device_map(device_map)
                 state_dict = load_state_dict(shard_file, dduf_entries=dduf_entries, map_location=load_device)
-
-                def _find_mismatched_keys(
-                    state_dict,
-                    model_state_dict,
-                    loaded_keys,
-                    ignore_mismatched_sizes,
-                ):
-                    mismatched_keys = []
-                    if ignore_mismatched_sizes:
-                        for checkpoint_key in loaded_keys:
-                            model_key = checkpoint_key
-                            # If the checkpoint is sharded, we may not have the key here.
-                            if checkpoint_key not in state_dict:
-                                continue
-
-                            if (
-                                model_key in model_state_dict
-                                and state_dict[checkpoint_key].shape != model_state_dict[model_key].shape
-                            ):
-                                mismatched_keys.append(
-                                    (checkpoint_key, state_dict[checkpoint_key].shape, model_state_dict[model_key].shape)
-                                )
-                                del state_dict[checkpoint_key]
-                    return mismatched_keys
 
                 mismatched_keys += _find_mismatched_keys(
                     state_dict, model_state_dict, loaded_keys, ignore_mismatched_sizes
