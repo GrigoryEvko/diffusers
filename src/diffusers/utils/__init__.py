@@ -127,6 +127,13 @@ from .import_utils import (
 from .loading_utils import get_module_from_name, get_submodule_by_name, load_image, load_video
 from .logging import get_logger
 from .outputs import BaseOutput
+from .telemetry import (
+    LoadingMetrics,
+    PerformanceTracker,
+    get_gpu_memory_stats,
+    log_memory_stats,
+    track_loading_performance,
+)
 from .peft_utils import (
     check_peft_version,
     delete_adapter_layers,
