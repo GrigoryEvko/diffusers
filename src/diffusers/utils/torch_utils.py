@@ -321,7 +321,7 @@ def enable_full_determinism():
     # Enable CUDNN deterministic mode
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cuda.matmul.fp32_precision = "ieee"  # NEW API - disable TF32 for determinism
 
 
 def disable_full_determinism():
