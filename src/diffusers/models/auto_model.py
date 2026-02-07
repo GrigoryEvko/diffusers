@@ -18,7 +18,7 @@ from typing import Optional, Union
 from huggingface_hub.utils import validate_hf_hub_args
 
 from ..configuration_utils import ConfigMixin
-from ..utils import logging
+from ..utils import DIFFUSERS_LOAD_ID_FIELDS, logging
 from ..utils.dynamic_modules_utils import get_class_from_dynamic_module, resolve_trust_remote_code
 
 
@@ -147,14 +147,13 @@ class AutoModel(ConfigMixin):
             "force_download",
             "local_files_only",
             "proxies",
-            "resume_download",
             "revision",
             "token",
         ]
         hub_kwargs = {name: kwargs.pop(name, None) for name in hub_kwargs_names}
 
         # load_config_kwargs uses the same hub kwargs minus subfolder and resume_download
-        load_config_kwargs = {k: v for k, v in hub_kwargs.items() if k not in ["subfolder", "resume_download"]}
+        load_config_kwargs = {k: v for k, v in hub_kwargs.items() if k not in ["subfolder"]}
 
         library = None
         orig_class_name = None
@@ -205,7 +204,6 @@ class AutoModel(ConfigMixin):
                 module_file=module_file,
                 class_name=class_name,
                 **hub_kwargs,
-                **kwargs,
             )
         else:
             from ..pipelines.pipeline_loading_utils import ALL_IMPORTABLE_CLASSES, get_class_obj_and_candidates
@@ -222,4 +220,11 @@ class AutoModel(ConfigMixin):
             raise ValueError(f"AutoModel can't find a model linked to {orig_class_name}.")
 
         kwargs = {**load_config_kwargs, **kwargs}
-        return model_cls.from_pretrained(pretrained_model_or_path, **kwargs)
+        model = model_cls.from_pretrained(pretrained_model_or_path, **kwargs)
+
+        load_id_kwargs = {"pretrained_model_name_or_path": pretrained_model_or_path, **kwargs}
+        parts = [load_id_kwargs.get(field, "null") for field in DIFFUSERS_LOAD_ID_FIELDS]
+        load_id = "|".join("null" if p is None else p for p in parts)
+        model._diffusers_load_id = load_id
+
+        return model

@@ -60,6 +60,7 @@ from ..utils import (
     deprecate,
     is_accelerate_available,
     is_accelerate_version,
+    is_bitsandbytes_version,
     is_hpu_available,
     is_torch_npu_available,
     is_torch_version,
@@ -67,6 +68,7 @@ from ..utils import (
     logging,
     numpy_to_pil,
 )
+from ..utils.distributed_utils import is_torch_dist_rank_zero
 from ..utils.hub_utils import _check_legacy_sharding_variant_format, load_or_create_model_card, populate_model_card
 from ..utils.torch_utils import empty_device_cache, get_device, is_compiled_module
 
@@ -83,6 +85,7 @@ from .pipeline_loading_utils import (
     _fetch_class_library_tuple,
     _get_custom_components_and_folders,
     _get_custom_pipeline_class,
+    _get_final_device_map,
     _get_ignore_patterns,
     _get_pipeline_class,
     _identify_model_variants,
@@ -108,9 +111,7 @@ LIBRARIES = []
 for library in LOADABLE_CLASSES:
     LIBRARIES.append(library)
 
-# Device map strategies are now handled by Accelerate integration
-# Keeping for backward compatibility reference
-SUPPORTED_DEVICE_MAP = ["auto", "balanced", "balanced_low_0", "sequential"]
+SUPPORTED_DEVICE_MAP = ["balanced"] + [get_device()]
 
 logger = logging.get_logger(__name__)
 
@@ -444,7 +445,10 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
 
             _, _, is_loaded_in_8bit_bnb = _check_bnb_status(module)
 
-            if is_loaded_in_8bit_bnb:
+            # https://github.com/huggingface/accelerate/pull/3907
+            if is_loaded_in_8bit_bnb and (
+                is_bitsandbytes_version("<", "0.48.0") or is_accelerate_version("<", "1.13.0.dev0")
+            ):
                 return False
 
             return hasattr(module, "_hf_hook") and (
@@ -523,9 +527,10 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
                     f"The module '{module.__class__.__name__}' has been loaded in `bitsandbytes` {'4bit' if is_loaded_in_4bit_bnb else '8bit'} and conversion to {dtype} is not supported. Module is still in {'4bit' if is_loaded_in_4bit_bnb else '8bit'} precision."
                 )
 
-            if is_loaded_in_8bit_bnb and device is not None:
+            if is_loaded_in_8bit_bnb and device is not None and is_bitsandbytes_version("<", "0.48.0"):
                 logger.warning(
                     f"The module '{module.__class__.__name__}' has been loaded in `bitsandbytes` 8bit and moving it to {device} via `.to()` is not supported. Module is still on {module.device}."
+                    "You need to upgrade bitsandbytes to at least 0.48.0"
                 )
 
             # Note: we also handle this at the ModelMixin level. The reason for doing it here too is that modeling
@@ -541,6 +546,14 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
             # This can happen for `transformer` models. CPU placement was added in
             # https://github.com/huggingface/transformers/pull/33122. So, we guard this accordingly.
             if is_loaded_in_4bit_bnb and device is not None and is_transformers_version(">", "4.44.0"):
+                module.to(device=device)
+            # added here https://github.com/huggingface/transformers/pull/43258
+            if (
+                is_loaded_in_8bit_bnb
+                and device is not None
+                and is_transformers_version(">", "4.58.0")
+                and is_bitsandbytes_version(">=", "0.48.0")
+            ):
                 module.to(device=device)
             elif not is_loaded_in_4bit_bnb and not is_loaded_in_8bit_bnb and not is_group_offloaded:
                 module.to(device, dtype)
@@ -708,6 +721,9 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
                 loading `from_flax`.
             dduf_file(`str`, *optional*):
                 Load weights from the specified dduf file.
+            disable_mmap ('bool', *optional*, defaults to 'False'):
+                Whether to disable mmap when loading a Safetensors model. This option can perform better when the model
+                is on a network mount or hard drive, which may not handle the seeky-ness of mmap very well.
 
         > [!TIP] > To use private or [gated](https://huggingface.co/docs/hub/models-gated#gated-models) models, log-in
         with `hf > auth login`.
@@ -759,6 +775,7 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
         use_onnx = kwargs.pop("use_onnx", None)
         load_connected_pipeline = kwargs.pop("load_connected_pipeline", False)
         quantization_config = kwargs.pop("quantization_config", None)
+        disable_mmap = kwargs.pop("disable_mmap", False)
 
         if torch_dtype is not None and not isinstance(torch_dtype, dict) and not isinstance(torch_dtype, torch.dtype):
             torch_dtype = torch.float32
@@ -795,30 +812,15 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
                 "Using `device_map` requires the `accelerate` library. Please install it using: `pip install accelerate`."
             )
 
-        # Validate device_map using our Accelerate integration
-        if device_map is not None:
-            # Convert integer device_map to dict format (device_map=0 -> {"": 0})
-            if isinstance(device_map, int):
-                device_map = {"": device_map}
+        if device_map is not None and not isinstance(device_map, str):
+            raise ValueError("`device_map` must be a string.")
 
-            from ..utils.accelerate_utils import validate_device_map
+        if device_map is not None and device_map not in SUPPORTED_DEVICE_MAP:
+            raise NotImplementedError(
+                f"{device_map} not supported. Supported strategies are: {', '.join(SUPPORTED_DEVICE_MAP)}"
+            )
 
-            validate_device_map(device_map)
-
-            # Check if disk offloading is used and validate offload_folder (matches Accelerate behavior)
-            if isinstance(device_map, dict):
-                uses_disk_offloading = "disk" in device_map.values()
-                if uses_disk_offloading and not offload_folder:
-                    raise ValueError(
-                        "At least one of the model submodule will be offloaded to disk, "
-                        "please pass along an `offload_folder`."
-                    )
-
-            # Log when using auto device mapping
-            if device_map == "auto":
-                logger.info("Using accelerate device_map='auto'")
-
-            # Check accelerate version requirement
+        if device_map is not None and device_map in SUPPORTED_DEVICE_MAP:
             if is_accelerate_version("<", "0.28.0"):
                 raise NotImplementedError("Device placement requires `accelerate` version `0.28.0` or later.")
 
@@ -976,47 +978,43 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
         # import it here to avoid circular import
         from diffusers import pipelines
 
-        # 6. Resolve component-specific device maps for direct device loading
-        component_device_maps = {}
-
+        # 6. device map delegation
+        final_device_map = None
         if device_map is not None:
-            # Check if this is a Flax pipeline - Flax models don't support device mapping
-            is_flax_pipeline = any("Flax" in str(value) for value in init_dict.values() if value[1] is not None)
-
-            if is_flax_pipeline:
-                logger.info("Device mapping is not supported for Flax pipelines. All components will use JAX's default device management.")
-                component_device_maps = {}
-            else:
-                from ..utils.accelerate_utils import PipelineDeviceMapper
-
-                device_mapper = PipelineDeviceMapper(
-                    pipeline_class=pipeline_class,
-                    init_dict=init_dict,
-                    passed_class_obj=passed_class_obj,
-                    cached_folder=cached_folder,
-                    # Loading kwargs needed for size calculation in auto strategies
-                    importable_classes=ALL_IMPORTABLE_CLASSES,
-                    pipelines=pipelines,
-                    is_pipeline_module=True,
-                    force_download=force_download,
-                    proxies=proxies,
-                    local_files_only=local_files_only,
-                    token=token,
-                    revision=revision,
-                )
-
-                component_device_maps = device_mapper.resolve_component_device_maps(
-                    device_map=device_map,
-                    max_memory=max_memory,
-                    torch_dtype=torch_dtype,
-                )
+            final_device_map = _get_final_device_map(
+                device_map=device_map,
+                pipeline_class=pipeline_class,
+                passed_class_obj=passed_class_obj,
+                init_dict=init_dict,
+                library=library,
+                max_memory=max_memory,
+                torch_dtype=torch_dtype,
+                cached_folder=cached_folder,
+                force_download=force_download,
+                proxies=proxies,
+                local_files_only=local_files_only,
+                token=token,
+                revision=revision,
+            )
 
         # 7. Load each module in the pipeline
         current_device_map = None
         _maybe_warn_for_wrong_component_in_quant_config(init_dict, quantization_config)
-        for name, (library_name, class_name) in logging.tqdm(init_dict.items(), desc="Loading pipeline components..."):
-            # 7.1 Get component-specific device_map
-            component_device_map = component_device_maps.get(name) if device_map is not None else None
+        logging_tqdm_kwargs = {"desc": "Loading pipeline components..."}
+        if not is_torch_dist_rank_zero():
+            logging_tqdm_kwargs["disable"] = True
+
+        for name, (library_name, class_name) in logging.tqdm(init_dict.items(), **logging_tqdm_kwargs):
+            # 7.1 device_map shenanigans
+            if final_device_map is not None:
+                if isinstance(final_device_map, dict) and len(final_device_map) > 0:
+                    component_device = final_device_map.get(name, None)
+                    if component_device is not None:
+                        current_device_map = {"": component_device}
+                    else:
+                        current_device_map = None
+                elif isinstance(final_device_map, str):
+                    current_device_map = final_device_map
 
             # 7.2 - now that JAX/Flax is an official framework of the library, we might load from Flax names
             class_name = class_name[4:] if class_name.startswith("Flax") else class_name
@@ -1052,7 +1050,7 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
                     torch_dtype=sub_model_dtype,
                     provider=provider,
                     sess_options=sess_options,
-                    device_map=component_device_map,
+                    device_map=current_device_map,
                     max_memory=max_memory,
                     offload_folder=offload_folder,
                     offload_state_dict=offload_state_dict,
@@ -1065,6 +1063,7 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
                     use_safetensors=use_safetensors,
                     dduf_entries=dduf_entries,
                     provider_options=provider_options,
+                    disable_mmap=disable_mmap,
                     quantization_config=quantization_config,
                 )
                 logger.info(
@@ -1118,68 +1117,7 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
         # 12. Save where the model was instantiated from
         model.register_to_config(_name_or_path=pretrained_model_name_or_path)
         if device_map is not None:
-            # Store the resolved component device maps
-            setattr(model, "hf_device_map", component_device_maps)
-
-            # Log the final device mapping
-            if device_map == "auto":
-                # Format component device maps for concise logging
-                device_summary = []
-                for comp_name, comp_map in component_device_maps.items():
-                    if comp_map:
-                        devices = set(comp_map.values())
-                        if len(devices) == 1:
-                            device_summary.append(f"{comp_name}: {list(devices)[0]}")
-                        else:
-                            device_summary.append(f"{comp_name}: {len(devices)} devices")
-                    else:
-                        device_summary.append(f"{comp_name}: cpu")
-                logger.info(f"Pipeline loaded with device_map: {{{', '.join(device_summary)}}}")
-
-        # Suggest device mapping if device_map was None
-        # Check if this is a Flax pipeline using pipeline class name
-        is_flax_pipeline = "Flax" in pipeline_class.__name__
-        if device_map is None and not is_flax_pipeline:
-            try:
-                # Check for available accelerator devices
-                available_devices = []
-                if torch.cuda.is_available():
-                    available_devices = [f"cuda:{i}" for i in range(torch.cuda.device_count())]
-                elif hasattr(torch, "xpu") and torch.xpu.is_available():
-                    available_devices = [f"xpu:{i}" for i in range(torch.xpu.device_count())]
-                elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                    available_devices = ["mps"]
-
-                # Only suggest if we have multiple devices or potential for CPU offloading
-                if len(available_devices) > 1:
-                    # Analyze loaded components
-                    components_info = {}
-                    for attr_name in ["unet", "vae", "text_encoder", "text_encoder_2", "transformer", "prior"]:
-                        if hasattr(model, attr_name):
-                            component = getattr(model, attr_name)
-                            if component is not None and hasattr(component, "parameters"):
-                                # Get approximate size
-                                param_count = sum(p.numel() for p in component.parameters())
-                                components_info[attr_name] = param_count
-
-                    if components_info:
-                        # Simple strategy: distribute larger models across GPUs
-                        sorted_components = sorted(components_info.items(), key=lambda x: x[1], reverse=True)
-                        device_map_suggestion = {}
-
-                        for i, (comp_name, _) in enumerate(sorted_components):
-                            device_idx = i % len(available_devices)
-                            device_map_suggestion[comp_name] = available_devices[device_idx]
-
-                        logger.info("💡 For memory-efficient loading across multiple devices, consider using device mapping:")
-                        logger.info(f"   device_map={device_map_suggestion}")
-                        logger.info(f"   Example: {pipeline_class.__name__}.from_pretrained('{pretrained_model_name_or_path}', device_map={device_map_suggestion})")
-            except Exception as e:
-                # Print error for debugging
-                print(f"Device map suggestion error: {e}")
-                import traceback
-                traceback.print_exc()
-
+            setattr(model, "hf_device_map", final_device_map)
         if quantization_config is not None:
             setattr(model, "quantization_config", quantization_config)
         return model
@@ -1303,7 +1241,9 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
 
             # This is because the model would already be placed on a CUDA device.
             _, _, is_loaded_in_8bit_bnb = _check_bnb_status(model)
-            if is_loaded_in_8bit_bnb:
+            if is_loaded_in_8bit_bnb and (
+                is_transformers_version("<", "4.58.0") or is_bitsandbytes_version("<", "0.48.0")
+            ):
                 logger.info(
                     f"Skipping the hook placement for the {model.__class__.__name__} as it is loaded in `bitsandbytes` 8bit."
                 )
@@ -1547,17 +1487,13 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
         Resets the device maps (if any) to None.
         """
         if self.hf_device_map is None:
-            logger.info("No device_map to reset")
             return
-
-        logger.info("Resetting device_map and moving all components to CPU")
-        self.remove_all_hooks()
-
-        for name, component in self.components.items():
-            if isinstance(component, torch.nn.Module):
-                component.to("cpu")
-
-        self.hf_device_map = None
+        else:
+            self.remove_all_hooks()
+            for name, component in self.components.items():
+                if isinstance(component, torch.nn.Module):
+                    component.to("cpu")
+            self.hf_device_map = None
 
     @classmethod
     @validate_hf_hub_args
@@ -1997,10 +1933,14 @@ class DiffusionPipeline(ConfigMixin, PushToHubMixin):
                 f"`self._progress_bar_config` should be of type `dict`, but is {type(self._progress_bar_config)}."
             )
 
+        progress_bar_config = dict(self._progress_bar_config)
+        if "disable" not in progress_bar_config:
+            progress_bar_config["disable"] = not is_torch_dist_rank_zero()
+
         if iterable is not None:
-            return tqdm(iterable, **self._progress_bar_config)
+            return tqdm(iterable, **progress_bar_config)
         elif total is not None:
-            return tqdm(total=total, **self._progress_bar_config)
+            return tqdm(total=total, **progress_bar_config)
         else:
             raise ValueError("Either `total` or `iterable` has to be defined.")
 

@@ -22,10 +22,12 @@ from typing import Dict, List, Literal, Optional, Union
 import safetensors
 import torch
 
+from ..hooks.group_offloading import _maybe_remove_and_reapply_group_offloading
 from ..utils import (
     MIN_PEFT_VERSION,
     USE_PEFT_BACKEND,
     check_peft_version,
+    convert_sai_sd_control_lora_state_dict_to_peft,
     convert_unet_state_dict_to_peft,
     delete_adapter_layers,
     get_adapter_name,
@@ -61,7 +63,12 @@ _SET_ADAPTER_SCALE_FN_MAPPING = {
     "HunyuanVideoFramepackTransformer3DModel": lambda model_cls, weights: weights,
     "WanVACETransformer3DModel": lambda model_cls, weights: weights,
     "ChromaTransformer2DModel": lambda model_cls, weights: weights,
+    "ChronoEditTransformer3DModel": lambda model_cls, weights: weights,
     "QwenImageTransformer2DModel": lambda model_cls, weights: weights,
+    "Flux2Transformer2DModel": lambda model_cls, weights: weights,
+    "ZImageTransformer2DModel": lambda model_cls, weights: weights,
+    "LTX2VideoTransformer3DModel": lambda model_cls, weights: weights,
+    "LTX2TextConnectors": lambda model_cls, weights: weights,
 }
 
 
@@ -231,6 +238,13 @@ class PeftAdapterMixin:
             if "lora_A" not in first_key:
                 state_dict = convert_unet_state_dict_to_peft(state_dict)
 
+            # Control LoRA from SAI is different from BFL Control LoRA
+            # https://huggingface.co/stabilityai/control-lora
+            # https://huggingface.co/comfyanonymous/ControlNet-v1-1_fp16_safetensors
+            is_sai_sd_control_lora = "lora_controlnet" in state_dict
+            if is_sai_sd_control_lora:
+                state_dict = convert_sai_sd_control_lora_state_dict_to_peft(state_dict)
+
             rank = {}
             for key, val in state_dict.items():
                 # Cannot figure out rank from lora layers that don't have at least 2 dimensions.
@@ -261,6 +275,14 @@ class PeftAdapterMixin:
                 model_state_dict=self.state_dict(),
                 adapter_name=adapter_name,
             )
+
+            # Adjust LoRA config for Control LoRA
+            if is_sai_sd_control_lora:
+                lora_config.lora_alpha = lora_config.r
+                lora_config.alpha_pattern = lora_config.rank_pattern
+                lora_config.bias = "all"
+                lora_config.modules_to_save = lora_config.exclude_modules
+                lora_config.exclude_modules = None
 
             # <Unsafe code
             # We can be sure that the following works as it just sets attention processors, lora layers and puts all in the same dtype
@@ -458,7 +480,7 @@ class PeftAdapterMixin:
         Args:
             adapter_names (`List[str]` or `str`):
                 The names of the adapters to use.
-            adapter_weights (`Union[List[float], float]`, *optional*):
+            weights (`Union[List[float], float]`, *optional*):
                 The adapter(s) weights to use with the UNet. If `None`, the weights are set to `1.0` for all the
                 adapters.
 
@@ -475,7 +497,7 @@ class PeftAdapterMixin:
             "jbilcke-hf/sdxl-cinematic-1", weight_name="pytorch_lora_weights.safetensors", adapter_name="cinematic"
         )
         pipeline.load_lora_weights("nerijs/pixel-art-xl", weight_name="pixel-art-xl.safetensors", adapter_name="pixel")
-        pipeline.unet.set_adapters(["cinematic", "pixel"], adapter_weights=[0.5, 0.5])
+        pipeline.unet.set_adapters(["cinematic", "pixel"], weights=[0.5, 0.5])
         ```
         """
         if not USE_PEFT_BACKEND:
@@ -793,6 +815,8 @@ class PeftAdapterMixin:
             # Pop also the corresponding adapter from the config
             if hasattr(self, "peft_config"):
                 self.peft_config.pop(adapter_name, None)
+
+        _maybe_remove_and_reapply_group_offloading(self)
 
     def enable_lora_hotswap(
         self, target_rank: int = 128, check_compiled: Literal["error", "warn", "ignore"] = "error"

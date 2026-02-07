@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Literal, Optional, Tuple, Union
 
 import torch
+import torch.distributed as dist
 
 from ..utils import get_logger
 
@@ -44,11 +45,16 @@ class ContextParallelConfig:
 
     Args:
         ring_degree (`int`, *optional*, defaults to `1`):
-            Number of devices to use for ring attention within a context parallel region. Must be a divisor of the
-            total number of devices in the context parallel mesh.
+            Number of devices to use for Ring Attention. Sequence is split across devices. Each device computes
+            attention between its local Q and KV chunks passed sequentially around ring. Lower memory (only holds 1/N
+            of KV at a time), overlaps compute with communication, but requires N iterations to see all tokens. Best
+            for long sequences with limited memory/bandwidth. Number of devices to use for ring attention within a
+            context parallel region. Must be a divisor of the total number of devices in the context parallel mesh.
         ulysses_degree (`int`, *optional*, defaults to `1`):
-            Number of devices to use for ulysses attention within a context parallel region. Must be a divisor of the
-            total number of devices in the context parallel mesh.
+            Number of devices to use for Ulysses Attention. Sequence split is across devices. Each device computes
+            local QKV, then all-gathers all KV chunks to compute full attention in one pass. Higher memory (stores all
+            KV), requires high-bandwidth all-to-all communication, but lower latency. Best for moderate sequences with
+            good interconnect bandwidth.
         convert_to_fp32 (`bool`, *optional*, defaults to `True`):
             Whether to convert output and LSE to float32 for ring attention numerical stability.
         rotate_method (`str`, *optional*, defaults to `"allgather"`):
@@ -62,6 +68,9 @@ class ContextParallelConfig:
     convert_to_fp32: bool = True
     # TODO: support alltoall
     rotate_method: Literal["allgather", "alltoall"] = "allgather"
+    # Whether to enable ulysses anything attention to support
+    # any sequence lengths and any head numbers.
+    ulysses_anything: bool = False
 
     _rank: int = None
     _world_size: int = None
@@ -79,29 +88,47 @@ class ContextParallelConfig:
         if self.ulysses_degree is None:
             self.ulysses_degree = 1
 
+        if self.ring_degree == 1 and self.ulysses_degree == 1:
+            raise ValueError(
+                "Either ring_degree or ulysses_degree must be greater than 1 in order to use context parallel inference"
+            )
+        if self.ring_degree < 1 or self.ulysses_degree < 1:
+            raise ValueError("`ring_degree` and `ulysses_degree` must be greater than or equal to 1.")
+        if self.rotate_method != "allgather":
+            raise NotImplementedError(
+                f"Only rotate_method='allgather' is supported for now, but got {self.rotate_method}."
+            )
+        if self.ulysses_anything:
+            if self.ulysses_degree == 1:
+                raise ValueError("ulysses_degree must be greater than 1 for ulysses_anything to be enabled.")
+            if self.ring_degree > 1:
+                raise ValueError("ulysses_anything cannot be enabled when ring_degree > 1.")
+
+    @property
+    def mesh_shape(self) -> Tuple[int, int]:
+        return (self.ring_degree, self.ulysses_degree)
+
+    @property
+    def mesh_dim_names(self) -> Tuple[str, str]:
+        """Dimension names for the device mesh."""
+        return ("ring", "ulysses")
+
     def setup(self, rank: int, world_size: int, device: torch.device, mesh: torch.distributed.device_mesh.DeviceMesh):
         self._rank = rank
         self._world_size = world_size
         self._device = device
         self._mesh = mesh
-        if self.ring_degree is None:
-            self.ring_degree = 1
-        if self.ulysses_degree is None:
-            self.ulysses_degree = 1
-        if self.rotate_method != "allgather":
-            raise NotImplementedError(
-                f"Only rotate_method='allgather' is supported for now, but got {self.rotate_method}."
+
+        if self.ulysses_degree * self.ring_degree > world_size:
+            raise ValueError(
+                f"The product of `ring_degree` ({self.ring_degree}) and `ulysses_degree` ({self.ulysses_degree}) must not exceed the world size ({world_size})."
             )
-        if self._flattened_mesh is None:
-            self._flattened_mesh = self._mesh._flatten()
-        if self._ring_mesh is None:
-            self._ring_mesh = self._mesh["ring"]
-        if self._ulysses_mesh is None:
-            self._ulysses_mesh = self._mesh["ulysses"]
-        if self._ring_local_rank is None:
-            self._ring_local_rank = self._ring_mesh.get_local_rank()
-        if self._ulysses_local_rank is None:
-            self._ulysses_local_rank = self._ulysses_mesh.get_local_rank()
+
+        self._flattened_mesh = self._mesh._flatten()
+        self._ring_mesh = self._mesh["ring"]
+        self._ulysses_mesh = self._mesh["ulysses"]
+        self._ring_local_rank = self._ring_mesh.get_local_rank()
+        self._ulysses_local_rank = self._ulysses_mesh.get_local_rank()
 
 
 @dataclass
@@ -119,7 +146,7 @@ class ParallelConfig:
     _rank: int = None
     _world_size: int = None
     _device: torch.device = None
-    _cp_mesh: torch.distributed.device_mesh.DeviceMesh = None
+    _mesh: torch.distributed.device_mesh.DeviceMesh = None
 
     def setup(
         self,
@@ -127,14 +154,14 @@ class ParallelConfig:
         world_size: int,
         device: torch.device,
         *,
-        cp_mesh: Optional[torch.distributed.device_mesh.DeviceMesh] = None,
+        mesh: Optional[torch.distributed.device_mesh.DeviceMesh] = None,
     ):
         self._rank = rank
         self._world_size = world_size
         self._device = device
-        self._cp_mesh = cp_mesh
+        self._mesh = mesh
         if self.context_parallel_config is not None:
-            self.context_parallel_config.setup(rank, world_size, device, cp_mesh)
+            self.context_parallel_config.setup(rank, world_size, device, mesh)
 
 
 @dataclass(frozen=True)
@@ -239,3 +266,39 @@ ContextParallelModelPlan = Dict[str, Union[ContextParallelInputType, ContextPara
 #
 # ContextParallelOutput:
 #     specifies how to gather the input tensor in the post-forward hook in the layer it is attached to
+
+
+# Below are utility functions for distributed communication in context parallelism.
+def gather_size_by_comm(size: int, group: dist.ProcessGroup) -> List[int]:
+    r"""Gather the local size from all ranks.
+    size: int, local size return: List[int], list of size from all ranks
+    """
+    # NOTE(Serving/CP Safety):
+    # Do NOT cache this collective result.
+    #
+    # In "Ulysses Anything" mode, `size` (e.g. per-rank local seq_len / S_LOCAL)
+    # may legitimately differ across ranks. If we cache based on the *local* `size`,
+    # different ranks can have different cache hit/miss patterns across time.
+    #
+    # That can lead to a catastrophic distributed hang:
+    # - some ranks hit cache and *skip* dist.all_gather()
+    # - other ranks miss cache and *enter* dist.all_gather()
+    # This mismatched collective participation will stall the process group and
+    # eventually trigger NCCL watchdog timeouts (often surfacing later as ALLTOALL
+    # timeouts in Ulysses attention).
+    world_size = dist.get_world_size(group=group)
+    # HACK: Use Gloo backend for all_gather to avoid H2D and D2H overhead
+    comm_backends = str(dist.get_backend(group=group))
+    # NOTE: e.g., dist.init_process_group(backend="cpu:gloo,cuda:nccl")
+    gather_device = "cpu" if "cpu" in comm_backends else torch.accelerator.current_accelerator()
+    gathered_sizes = [torch.empty((1,), device=gather_device, dtype=torch.int64) for _ in range(world_size)]
+    dist.all_gather(
+        gathered_sizes,
+        torch.tensor([size], device=gather_device, dtype=torch.int64),
+        group=group,
+    )
+
+    gathered_sizes = [s[0].item() for s in gathered_sizes]
+    # NOTE: DON'T use tolist here due to graph break - Explanation:
+    # Backend compiler `inductor` failed with aten._local_scalar_dense.default
+    return gathered_sizes
