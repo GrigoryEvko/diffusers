@@ -238,7 +238,8 @@ def _fetch_state_dict(
                     subfolder=subfolder,
                     user_agent=user_agent,
                 )
-                state_dict = safetensors.torch.load_file(model_file, device=device or "cpu")
+                _default_device = f"cuda:{torch.cuda.current_device()}" if torch.cuda.is_available() else "cpu"
+                state_dict = safetensors.torch.load_file(model_file, device=device or _default_device)
                 metadata = _load_sft_state_dict_metadata(model_file)
 
             except (IOError, safetensors.SafetensorError) as e:
@@ -266,7 +267,7 @@ def _fetch_state_dict(
                 subfolder=subfolder,
                 user_agent=user_agent,
             )
-            state_dict = load_state_dict(model_file, map_location=device or "cpu")
+            state_dict = load_state_dict(model_file, map_location=device)
             metadata = None
     else:
         state_dict = pretrained_model_name_or_path_or_dict

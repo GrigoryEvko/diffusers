@@ -143,9 +143,9 @@ class PatchedLoraProjection(torch.nn.Module):
         # we can drop the lora layer now
         self.lora_linear_layer = None
 
-        # offload the up and down matrices to CPU to not blow the memory
-        self.w_up = w_up.cpu()
-        self.w_down = w_down.cpu()
+        # Keep fused matrices on same device for unfusion
+        self.w_up = w_up
+        self.w_down = w_down
         self.lora_scale = lora_scale
 
     def _unfuse_lora(self):
@@ -343,9 +343,9 @@ class LoRACompatibleConv(nn.Conv2d):
         # we can drop the lora layer now
         self.lora_layer = None
 
-        # offload the up and down matrices to CPU to not blow the memory
-        self.w_up = w_up.cpu()
-        self.w_down = w_down.cpu()
+        # Keep fused matrices on same device for unfusion
+        self.w_up = w_up
+        self.w_down = w_down
         self._lora_scale = lora_scale
 
     def _unfuse_lora(self):
@@ -427,9 +427,9 @@ class LoRACompatibleLinear(nn.Linear):
         # we can drop the lora layer now
         self.lora_layer = None
 
-        # offload the up and down matrices to CPU to not blow the memory
-        self.w_up = w_up.cpu()
-        self.w_down = w_down.cpu()
+        # Keep fused matrices on same device for unfusion
+        self.w_up = w_up
+        self.w_down = w_down
         self._lora_scale = lora_scale
 
     def _unfuse_lora(self):

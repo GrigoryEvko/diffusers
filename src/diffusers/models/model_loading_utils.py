@@ -157,11 +157,15 @@ def load_state_dict(
     checkpoint_file: Union[str, os.PathLike],
     dduf_entries: Optional[Dict[str, DDUFEntry]] = None,
     disable_mmap: bool = False,
-    map_location: Union[str, torch.device] = "cpu",
+    map_location: Union[str, torch.device, None] = None,
 ):
     """
     Reads a checkpoint file, returning properly formatted errors if they arise.
     """
+    # Default to CUDA if available — avoids CPU materialization of large models
+    if map_location is None:
+        map_location = f"cuda:{torch.cuda.current_device()}" if torch.cuda.is_available() else "cpu"
+
     # TODO: maybe refactor a bit this part where we pass a dict here
     if isinstance(checkpoint_file, dict):
         return checkpoint_file
@@ -169,11 +173,17 @@ def load_state_dict(
         file_extension = os.path.basename(checkpoint_file).split(".")[-1]
         if file_extension == SAFETENSORS_FILE_EXTENSION:
             if dduf_entries:
-                # tensors are loaded on cpu
                 with dduf_entries[checkpoint_file].as_mmap() as mm:
-                    return safetensors.torch.load(mm)
+                    state_dict = safetensors.torch.load(mm)
+                    # DDUF load() always returns CPU tensors; move to target device
+                    if str(map_location) != "cpu":
+                        state_dict = {k: v.to(map_location) for k, v in state_dict.items()}
+                    return state_dict
             if disable_mmap:
-                return safetensors.torch.load(open(checkpoint_file, "rb").read())
+                state_dict = safetensors.torch.load(open(checkpoint_file, "rb").read())
+                if str(map_location) != "cpu":
+                    state_dict = {k: v.to(map_location) for k, v in state_dict.items()}
+                return state_dict
             else:
                 return safetensors.torch.load_file(checkpoint_file, device=map_location)
         elif file_extension == GGUF_FILE_EXTENSION:
@@ -357,7 +367,16 @@ def _load_shard_file(
     low_cpu_mem_usage=False,
     disable_mmap=False,
 ):
-    state_dict = load_state_dict(shard_file, dduf_entries=dduf_entries, disable_mmap=disable_mmap)
+    # Forward target device from device_map to avoid CPU materialization of shards
+    load_device = None
+    if device_map is not None:
+        if isinstance(device_map, dict) and "" in device_map:
+            load_device = device_map[""]
+        elif isinstance(device_map, dict):
+            devices = set(device_map.values())
+            if len(devices) == 1:
+                load_device = next(iter(devices))
+    state_dict = load_state_dict(shard_file, dduf_entries=dduf_entries, disable_mmap=disable_mmap, map_location=load_device)
     mismatched_keys = _find_mismatched_keys(
         state_dict,
         model_state_dict,

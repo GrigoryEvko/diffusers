@@ -180,7 +180,8 @@ class UNet2DConditionLoadersMixin:
                         subfolder=subfolder,
                         user_agent=user_agent,
                     )
-                    state_dict = safetensors.torch.load_file(model_file, device="cpu")
+                    _dev = f"cuda:{torch.cuda.current_device()}" if torch.cuda.is_available() else "cpu"
+                    state_dict = safetensors.torch.load_file(model_file, device=_dev)
                 except IOError as e:
                     if not allow_pickle:
                         raise e

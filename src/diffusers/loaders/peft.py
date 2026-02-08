@@ -272,7 +272,7 @@ class PeftAdapterMixin:
                 network_alphas,
                 metadata,
                 rank,
-                model_state_dict=self.state_dict(),
+                model_state_dict=None,  # Not used by get_peft_kwargs — avoids 3.4GB copy
                 adapter_name=adapter_name,
             )
 

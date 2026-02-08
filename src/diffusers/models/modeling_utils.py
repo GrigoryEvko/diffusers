@@ -110,6 +110,8 @@ def _get_load_device_from_device_map(device_map):
     we can load directly to that device to avoid CPU memory usage.
     """
     if device_map is None:
+        if torch.cuda.is_available():
+            return f"cuda:{torch.cuda.current_device()}"
         return "cpu"
 
     if isinstance(device_map, dict):
