@@ -380,7 +380,7 @@ class DPMSolverSinglestepScheduler(SchedulerMixin, ConfigMixin):
                 .astype(np.int64)
             )
 
-        sigmas = np.array(((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5)
+        sigmas = (((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5).cpu().numpy()
         log_sigmas = np.log(sigmas)
         if self.config.use_karras_sigmas:
             sigmas = np.flip(sigmas).copy()
@@ -403,7 +403,7 @@ class DPMSolverSinglestepScheduler(SchedulerMixin, ConfigMixin):
             sigmas = np.interp(timesteps, np.arange(0, len(sigmas)), sigmas)
 
         if self.config.final_sigmas_type == "sigma_min":
-            sigma_last = ((1 - self.alphas_cumprod[0]) / self.alphas_cumprod[0]) ** 0.5
+            sigma_last = (((1 - self.alphas_cumprod[0]) / self.alphas_cumprod[0]) ** 0.5).item()
         elif self.config.final_sigmas_type == "zero":
             sigma_last = 0
         else:

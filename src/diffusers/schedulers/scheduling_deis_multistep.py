@@ -315,7 +315,7 @@ class DEISMultistepScheduler(SchedulerMixin, ConfigMixin):
                 f"{self.config.timestep_spacing} is not supported. Please make sure to choose one of 'linspace', 'leading' or 'trailing'."
             )
 
-        sigmas = np.array(((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5)
+        sigmas = (((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5).cpu().numpy()
         log_sigmas = np.log(sigmas)
         if self.config.use_karras_sigmas:
             sigmas = np.flip(sigmas).copy()
@@ -340,7 +340,7 @@ class DEISMultistepScheduler(SchedulerMixin, ConfigMixin):
             sigmas = np.concatenate([sigmas, sigmas[-1:]]).astype(np.float32)
         else:
             sigmas = np.interp(timesteps, np.arange(0, len(sigmas)), sigmas)
-            sigma_last = ((1 - self.alphas_cumprod[0]) / self.alphas_cumprod[0]) ** 0.5
+            sigma_last = (((1 - self.alphas_cumprod[0]) / self.alphas_cumprod[0]) ** 0.5).item()
             sigmas = np.concatenate([sigmas, [sigma_last]]).astype(np.float32)
 
         self.sigmas = torch.from_numpy(sigmas)

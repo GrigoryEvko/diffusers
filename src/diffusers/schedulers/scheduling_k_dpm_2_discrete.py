@@ -288,7 +288,7 @@ class KDPM2DiscreteScheduler(SchedulerMixin, ConfigMixin):
                 f"{self.config.timestep_spacing} is not supported. Please make sure to choose one of 'linspace', 'leading' or 'trailing'."
             )
 
-        sigmas = np.array(((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5)
+        sigmas = (((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5).cpu().numpy()
         log_sigmas = np.log(sigmas)
         sigmas = np.interp(timesteps, np.arange(0, len(sigmas)), sigmas)
 

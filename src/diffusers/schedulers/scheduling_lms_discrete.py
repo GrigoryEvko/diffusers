@@ -173,7 +173,7 @@ class LMSDiscreteScheduler(SchedulerMixin, ConfigMixin):
         self.alphas = 1.0 - self.betas
         self.alphas_cumprod = torch.cumprod(self.alphas, dim=0)
 
-        sigmas = np.array(((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5)
+        sigmas = (((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5).cpu().numpy()
         sigmas = np.concatenate([sigmas[::-1], [0.0]]).astype(np.float32)
         self.sigmas = torch.from_numpy(sigmas)
 
@@ -324,7 +324,7 @@ class LMSDiscreteScheduler(SchedulerMixin, ConfigMixin):
                 f"{self.config.timestep_spacing} is not supported. Please make sure to choose one of 'linspace', 'leading' or 'trailing'."
             )
 
-        sigmas = np.array(((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5)
+        sigmas = (((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5).cpu().numpy()
         log_sigmas = np.log(sigmas)
         sigmas = np.interp(timesteps, np.arange(0, len(sigmas)), sigmas)
 

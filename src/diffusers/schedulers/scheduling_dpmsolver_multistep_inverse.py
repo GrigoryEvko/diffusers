@@ -322,7 +322,7 @@ class DPMSolverMultistepInverseScheduler(SchedulerMixin, ConfigMixin):
                 "'leading' or 'trailing'."
             )
 
-        sigmas = np.array(((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5)
+        sigmas = (((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5).cpu().numpy()
         log_sigmas = np.log(sigmas)
 
         if self.config.use_karras_sigmas:
@@ -348,7 +348,7 @@ class DPMSolverMultistepInverseScheduler(SchedulerMixin, ConfigMixin):
             sigmas = np.interp(timesteps, np.arange(0, len(sigmas)), sigmas)
             sigma_max = (
                 (1 - self.alphas_cumprod[self.noisiest_timestep]) / self.alphas_cumprod[self.noisiest_timestep]
-            ) ** 0.5
+            ).pow(0.5).item()
             sigmas = np.concatenate([sigmas, [sigma_max]]).astype(np.float32)
 
         self.sigmas = torch.from_numpy(sigmas)

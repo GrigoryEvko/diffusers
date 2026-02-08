@@ -279,7 +279,7 @@ class SASolverScheduler(SchedulerMixin, ConfigMixin):
         # Clipping the minimum of all lambda(t) for numerical stability.
         # This is critical for cosine (squaredcos_cap_v2) noise schedule.
         clipped_idx = torch.searchsorted(torch.flip(self.lambda_t, [0]), self.config.lambda_min_clipped)
-        last_timestep = ((self.config.num_train_timesteps - clipped_idx).numpy()).item()
+        last_timestep = ((self.config.num_train_timesteps - clipped_idx).cpu().numpy()).item()
 
         # "linspace", "leading", "trailing" corresponds to annotation of Table 2. of https://huggingface.co/papers/2305.08891
         if self.config.timestep_spacing == "linspace":
@@ -304,7 +304,7 @@ class SASolverScheduler(SchedulerMixin, ConfigMixin):
                 f"{self.config.timestep_spacing} is not supported. Please make sure to choose one of 'linspace', 'leading' or 'trailing'."
             )
 
-        sigmas = np.array(((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5)
+        sigmas = (((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5).cpu().numpy()
         log_sigmas = np.log(sigmas)
         if self.config.use_karras_sigmas:
             sigmas = np.flip(sigmas).copy()
@@ -329,7 +329,7 @@ class SASolverScheduler(SchedulerMixin, ConfigMixin):
             sigmas = np.concatenate([sigmas, sigmas[-1:]]).astype(np.float32)
         else:
             sigmas = np.interp(timesteps, np.arange(0, len(sigmas)), sigmas)
-            sigma_last = ((1 - self.alphas_cumprod[0]) / self.alphas_cumprod[0]) ** 0.5
+            sigma_last = (((1 - self.alphas_cumprod[0]) / self.alphas_cumprod[0]) ** 0.5).item()
             sigmas = np.concatenate([sigmas, [sigma_last]]).astype(np.float32)
 
         self.sigmas = torch.from_numpy(sigmas)
