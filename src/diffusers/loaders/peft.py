@@ -168,6 +168,7 @@ class PeftAdapterMixin:
         _pipeline = kwargs.pop("_pipeline", None)
         low_cpu_mem_usage = kwargs.pop("low_cpu_mem_usage", False)
         metadata = kwargs.pop("metadata", None)
+        device = kwargs.pop("device", None)
         allow_pickle = False
 
         user_agent = {"file_type": "attn_procs_weights", "framework": "pytorch"}
@@ -185,6 +186,7 @@ class PeftAdapterMixin:
             user_agent=user_agent,
             allow_pickle=allow_pickle,
             metadata=metadata,
+            device=device,
         )
         if network_alphas is not None and prefix is None:
             raise ValueError("`network_alphas` cannot be None when `prefix` is None.")

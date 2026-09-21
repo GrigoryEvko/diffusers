@@ -209,12 +209,16 @@ def _fetch_state_dict(
     allow_pickle,
     metadata=None,
     return_file_metadata=False,
+    device=None,
 ):
     """
     `metadata` is diffusers' own LoRA adapter metadata, parsed out of the file's `__metadata__`. With
     `return_file_metadata`, that `__metadata__` is returned in full as a third element. It is `None` whenever the
     weights did not come from a safetensors file — a state dict passed in memory, or a pickled checkpoint — since there
     is nowhere else for a header to live.
+
+    `device` is the device that the weights of a file load to. The weights load to the CPU when `device` is `None`. A
+    state dict passed in memory stays on its own device.
     """
     file_metadata = None
     model_file = None
@@ -245,7 +249,7 @@ def _fetch_state_dict(
                     subfolder=subfolder,
                     user_agent=user_agent,
                 )
-                state_dict = safetensors.torch.load_file(model_file, device="cpu")
+                state_dict = safetensors.torch.load_file(model_file, device=device or "cpu")
                 metadata = _load_sft_state_dict_metadata(model_file)
                 if return_file_metadata:
                     file_metadata = _load_sft_file_metadata(model_file)
@@ -276,7 +280,7 @@ def _fetch_state_dict(
                 subfolder=subfolder,
                 user_agent=user_agent,
             )
-            state_dict = load_state_dict(model_file)
+            state_dict = load_state_dict(model_file, map_location=device or "cpu")
             metadata = None
     else:
         state_dict = pretrained_model_name_or_path_or_dict
