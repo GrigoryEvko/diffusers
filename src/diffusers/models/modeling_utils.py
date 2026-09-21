@@ -76,6 +76,7 @@ from .model_loading_utils import (
     _expand_device_map,
     _fetch_index_file,
     _fetch_index_file_legacy,
+    _get_load_device_from_device_map,
     _load_shard_file,
     _load_shard_files_with_threadpool,
     load_state_dict,
@@ -1368,7 +1369,11 @@ class ModelMixin(torch.nn.Module, PushToHubMixin):
         state_dict = None
         if not is_sharded:
             # Time to load the checkpoint
-            state_dict = load_state_dict(resolved_model_file[0], disable_mmap=disable_mmap)
+            state_dict = load_state_dict(
+                resolved_model_file[0],
+                disable_mmap=disable_mmap,
+                map_location=_get_load_device_from_device_map(device_map),
+            )
             # We only fix it for non sharded checkpoints as we don't need it yet for sharded one.
             model._fix_state_dict_keys_on_load(state_dict)
 
@@ -1437,6 +1442,9 @@ class ModelMixin(torch.nn.Module, PushToHubMixin):
                 "offload_index": offload_index,
             }
             dispatch_model(model, **device_map_kwargs)
+            if isinstance(device_map, dict):
+                device_summary = ", ".join(f"{k or 'model'}: {v}" for k, v in device_map.items())
+                logger.info(f"Model loaded with device_map: {{{device_summary}}}")
 
         if hf_quantizer is not None:
             hf_quantizer.postprocess_model(model)

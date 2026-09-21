@@ -151,6 +151,39 @@ def _determine_param_device(param_name: str, device_map: dict[str, int | str | t
         return device_map[module_name]
 
 
+def _get_load_device_from_device_map(
+    device_map: str | dict[str, int | str | torch.device] | None,
+) -> str | int:
+    """
+    Give the device that a checkpoint file loads to, before the weights go into the model.
+
+    A device map that puts the full model on one device lets the checkpoint load directly to that device. This
+    prevents a full copy of the weights in CPU memory. A string strategy, a map with more than one device, and the
+    "disk" and "meta" targets load to the CPU first.
+
+    Args:
+        device_map: The device map of `from_pretrained`, before or after `_determine_device_map`
+
+    Returns:
+        A device string or a device index that `safetensors` and `torch.load` accept
+    """
+    if not isinstance(device_map, dict):
+        return "cpu"
+
+    devices = {device_map[""]} if "" in device_map else set(device_map.values())
+    if len(devices) != 1:
+        return "cpu"
+
+    device = next(iter(devices))
+    if isinstance(device, int):
+        return f"cuda:{device}" if torch.cuda.is_available() else "cpu"
+    # safetensors does not accept a `torch.device` object.
+    device = str(device)
+    if device in ("disk", "meta"):
+        return "cpu"
+    return device
+
+
 def load_state_dict(
     checkpoint_file: str | os.PathLike,
     disable_mmap: bool = False,
@@ -349,7 +382,9 @@ def _load_shard_file(
     low_cpu_mem_usage=False,
     disable_mmap=False,
 ):
-    state_dict = load_state_dict(shard_file, disable_mmap=disable_mmap)
+    state_dict = load_state_dict(
+        shard_file, disable_mmap=disable_mmap, map_location=_get_load_device_from_device_map(device_map)
+    )
     if hf_quantizer is not None:
         state_dict = hf_quantizer.maybe_update_state_dict(state_dict)
 
