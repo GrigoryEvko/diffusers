@@ -453,7 +453,7 @@ class UniPCMultistepScheduler(SchedulerMixin, ConfigMixin):
                 sigmas = (((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5).cpu().numpy()
             sigmas = np.interp(timesteps, np.arange(0, len(sigmas)), sigmas)
             if self.config.final_sigmas_type == "sigma_min":
-                sigma_last = ((1 - self.alphas_cumprod[0]) / self.alphas_cumprod[0]) ** 0.5
+                sigma_last = (((1 - self.alphas_cumprod[0]) / self.alphas_cumprod[0]) ** 0.5).item()
             elif self.config.final_sigmas_type == "zero":
                 sigma_last = 0
             else:

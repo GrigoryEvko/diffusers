@@ -399,7 +399,7 @@ class EulerDiscreteScheduler(SchedulerMixin, ConfigMixin):
         self.num_inference_steps = num_inference_steps
 
         if sigmas is not None:
-            log_sigmas = np.log(np.array(((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5))
+            log_sigmas = np.log((((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5).cpu().numpy())
             sigmas = np.array(sigmas).astype(np.float32)
             timesteps = np.array([self._sigma_to_t(sigma, log_sigmas) for sigma in sigmas[:-1]])
 
@@ -433,12 +433,12 @@ class EulerDiscreteScheduler(SchedulerMixin, ConfigMixin):
                         f"{self.config.timestep_spacing} is not supported. Please make sure to choose one of 'linspace', 'leading' or 'trailing'."
                     )
 
-            sigmas = np.array(((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5)
+            sigmas = (((1 - self.alphas_cumprod) / self.alphas_cumprod) ** 0.5).cpu().numpy()
             log_sigmas = np.log(sigmas)
             if self.config.interpolation_type == "linear":
                 sigmas = np.interp(timesteps, np.arange(0, len(sigmas)), sigmas)
             elif self.config.interpolation_type == "log_linear":
-                sigmas = torch.linspace(np.log(sigmas[-1]), np.log(sigmas[0]), num_inference_steps + 1).exp().numpy()
+                sigmas = torch.linspace(np.log(sigmas[-1]), np.log(sigmas[0]), num_inference_steps + 1).exp().cpu().numpy()
             else:
                 raise ValueError(
                     f"{self.config.interpolation_type} is not implemented. Please specify interpolation_type to either"
@@ -458,7 +458,7 @@ class EulerDiscreteScheduler(SchedulerMixin, ConfigMixin):
                 timesteps = np.array([self._sigma_to_t(sigma, log_sigmas) for sigma in sigmas])
 
             if self.config.final_sigmas_type == "sigma_min":
-                sigma_last = ((1 - self.alphas_cumprod[0]) / self.alphas_cumprod[0]) ** 0.5
+                sigma_last = (((1 - self.alphas_cumprod[0]) / self.alphas_cumprod[0]) ** 0.5).item()
             elif self.config.final_sigmas_type == "zero":
                 sigma_last = 0
             else:
