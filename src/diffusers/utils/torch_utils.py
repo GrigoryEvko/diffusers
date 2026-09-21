@@ -397,7 +397,12 @@ def enable_full_determinism():
     # Enable CUDNN deterministic mode
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    torch.backends.cuda.matmul.allow_tf32 = False
+    # Disable TF32 in float32 matmul. PyTorch 2.9 and each subsequent version give the `fp32_precision` API. A mix of
+    # this API and `allow_tf32` in one process causes torch.compile failures.
+    if is_torch_version(">=", "2.9.0"):
+        torch.backends.cuda.matmul.fp32_precision = "ieee"
+    else:
+        torch.backends.cuda.matmul.allow_tf32 = False
 
 
 def disable_full_determinism():
