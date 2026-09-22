@@ -46,7 +46,7 @@ from ..utils import (
     set_adapter_layers,
     set_weights_and_activate_adapters,
 )
-from ..utils.peft_utils import _create_lora_config
+from ..utils.peft_utils import _create_lora_config, _maybe_warn_for_unhandled_keys
 from ..utils.state_dict_utils import _load_sft_file_metadata, _load_sft_state_dict_metadata
 
 
@@ -335,6 +335,70 @@ def _pack_dict_with_prefix(state_dict, prefix):
     return sd_with_prefix
 
 
+def _text_model_prefix_mapper(text_encoder: nn.Module) -> Callable[[str], str]:
+    """
+    Give a function that adapts the `text_model.` prefix of a module name to the layout of `text_encoder`.
+
+    transformers 4 wraps the layers of `CLIPTextModel` in a `text_model` attribute. transformers 5 removed that wrapper
+    from `CLIPTextModel`, but `CLIPTextModelWithProjection` keeps it. A LoRA checkpoint can use the two layouts, for
+    example `text_model.encoder.layers.0.self_attn.q_proj` and `encoder.layers.0.self_attn.q_proj`.
+
+    The function removes the prefix when `text_encoder` has no `text_model` wrapper and the name without the prefix
+    starts with a child of `text_encoder`. It adds the prefix when `text_encoder` has the wrapper and the name starts
+    with a child of the wrapper, not of `text_encoder`. A different name does not change.
+
+    Args:
+        text_encoder: The text encoder that the LoRA loads into
+
+    Returns:
+        A function from a module name, or a key that starts with a module name, to the adapted name
+    """
+    children = {name for name, _ in text_encoder.named_children()}
+    wrapper = getattr(text_encoder, "text_model", None)
+
+    if isinstance(wrapper, nn.Module):
+        wrapper_children = {name for name, _ in wrapper.named_children()}
+
+        def add_prefix(name: str) -> str:
+            head = name.split(".", 1)[0]
+            if head not in children and head in wrapper_children:
+                return f"text_model.{name}"
+            return name
+
+        return add_prefix
+
+    def remove_prefix(name: str) -> str:
+        head, _, rest = name.partition(".")
+        if head == "text_model" and rest.split(".", 1)[0] in children:
+            return rest
+        return name
+
+    return remove_prefix
+
+
+def _adapt_lora_config_names(lora_config_kwargs: dict, adapt_name: Callable[[str], str]) -> dict:
+    """
+    Adapt the module names in the `LoraConfig` keyword arguments of a LoRA checkpoint.
+
+    Args:
+        lora_config_kwargs: The `LoraConfig` keyword arguments from the metadata of the checkpoint
+        adapt_name: The function from `_text_model_prefix_mapper`
+
+    Returns:
+        A copy of `lora_config_kwargs` with adapted `target_modules`, `rank_pattern` and `alpha_pattern`. A string
+        `target_modules` is a regular expression and does not change
+    """
+    lora_config_kwargs = dict(lora_config_kwargs)
+    target_modules = lora_config_kwargs.get("target_modules")
+    if isinstance(target_modules, (list, tuple, set)):
+        lora_config_kwargs["target_modules"] = [adapt_name(name) for name in target_modules]
+    for pattern_key in ("rank_pattern", "alpha_pattern"):
+        pattern = lora_config_kwargs.get(pattern_key)
+        if isinstance(pattern, dict):
+            lora_config_kwargs[pattern_key] = {adapt_name(name): value for name, value in pattern.items()}
+    return lora_config_kwargs
+
+
 def _load_lora_into_text_encoder(
     state_dict,
     network_alphas,
@@ -389,6 +453,12 @@ def _load_lora_into_text_encoder(
         # convert state dict
         state_dict = convert_state_dict_to_peft(state_dict)
 
+        # The keys must agree with `text_encoder.named_modules()`, which has or has not the `text_model` wrapper.
+        adapt_name = _text_model_prefix_mapper(text_encoder)
+        state_dict = {adapt_name(k): v for k, v in state_dict.items()}
+        if metadata is not None:
+            metadata = _adapt_lora_config_names(metadata, adapt_name)
+
         for name, _ in text_encoder.named_modules():
             if name.endswith((".q_proj", ".k_proj", ".v_proj", ".out_proj", ".fc1", ".fc2")):
                 rank_key = f"{name}.lora_B.weight"
@@ -397,7 +467,9 @@ def _load_lora_into_text_encoder(
 
         if network_alphas is not None:
             alpha_keys = [k for k in network_alphas.keys() if k.startswith(prefix) and k.split(".")[0] == prefix]
-            network_alphas = {k.removeprefix(f"{prefix}."): v for k, v in network_alphas.items() if k in alpha_keys}
+            network_alphas = {
+                adapt_name(k.removeprefix(f"{prefix}.")): v for k, v in network_alphas.items() if k in alpha_keys
+            }
 
         # create `LoraConfig`
         lora_config = _create_lora_config(state_dict, network_alphas, metadata, rank, is_unet=False)
@@ -412,12 +484,21 @@ def _load_lora_into_text_encoder(
         )
         # inject LoRA layers and load the state dict
         # in transformers we automatically check whether the adapter name is already in use or not
-        text_encoder.load_adapter(
+        loading_info = text_encoder.load_adapter(
             adapter_name=adapter_name,
             adapter_state_dict=state_dict,
             peft_config=lora_config,
             **peft_kwargs,
         )
+        # transformers 5.9 changes the adapter keys with the weight conversion of the model. For example, it removes
+        # `text_model.` from the keys of `CLIPTextModelWithProjection`. The adapter weights then do not load, and the
+        # LoRA has no effect. The keys of `state_dict` agree with the module paths, so PEFT loads them by path.
+        unexpected_keys = getattr(loading_info, "unexpected_keys", None) or ()
+        if any(".lora_" in key for key in unexpected_keys):
+            from peft import set_peft_model_state_dict
+
+            incompatible_keys = set_peft_model_state_dict(text_encoder, state_dict, adapter_name, **peft_kwargs)
+            _maybe_warn_for_unhandled_keys(incompatible_keys, adapter_name)
 
         # scale LoRA layers with `lora_scale`
         scale_lora_layers(text_encoder, weight=lora_scale)
