@@ -26,7 +26,7 @@ import torch.nn as nn
 from huggingface_hub import model_info
 from huggingface_hub.constants import HF_HUB_OFFLINE
 
-from ..models.model_loading_utils import _resolve_load_device
+from ..models.model_loading_utils import _resolve_load_device, load_safetensors_file
 from ..models.modeling_utils import ModelMixin, load_state_dict
 from ..utils import (
     USE_PEFT_BACKEND,
@@ -251,7 +251,7 @@ def _fetch_state_dict(
                     subfolder=subfolder,
                     user_agent=user_agent,
                 )
-                state_dict = safetensors.torch.load_file(model_file, device=_resolve_load_device(device))
+                state_dict = load_safetensors_file(model_file, _resolve_load_device(device))
                 metadata = _load_sft_state_dict_metadata(model_file)
                 if return_file_metadata:
                     file_metadata = _load_sft_file_metadata(model_file)
