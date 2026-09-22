@@ -113,7 +113,7 @@ class LoadingStrategy(ABC):
             Device string (e.g., "cpu", "cuda:0")
         """
         if device_map is None:
-            return "cpu"
+            return self._get_default_device()
 
         if isinstance(device_map, str):
             return device_map
@@ -128,7 +128,35 @@ class LoadingStrategy(ABC):
                 return device
 
         # Default device
-        return device_map.get("", "cpu")
+        return device_map.get("", self._get_default_device())
+
+    @staticmethod
+    def _get_default_device() -> str:
+        """Return CUDA if available, else CPU."""
+        if torch.cuda.is_available():
+            return f"cuda:{torch.cuda.current_device()}"
+        return "cpu"
+
+    def _get_optimal_device(self, device_map: Optional[Union[str, Dict[str, str]]]) -> str:
+        """
+        Determine optimal device for bulk loading (safe_open/load_file).
+
+        Priority:
+        1. If device_map specifies single device -> use it
+        2. If CUDA available -> use current CUDA device
+        3. Fallback -> cpu
+        """
+        if device_map:
+            if isinstance(device_map, str):
+                if device_map not in ("auto", "balanced", "sequential"):
+                    return device_map
+            elif isinstance(device_map, dict):
+                devices = set(device_map.values())
+                if len(devices) == 1:
+                    device = next(iter(devices))
+                    if device not in ("cpu", "disk"):
+                        return device
+        return self._get_default_device()
 
 
 class EagerLoadingStrategy(LoadingStrategy):
@@ -231,16 +259,15 @@ class LazyLoadingStrategy(LoadingStrategy):
             logger.info(f"Lazy loading {len(keys_to_load)}/{len(available_keys)} tensors")
 
         # Step 2: Load only required tensors directly to target devices
+        optimal_device = self._get_optimal_device(device_map)
         state_dict = {}
-        with safetensors.torch.safe_open(checkpoint_path, framework="pt", device="cpu") as f:
+        with safetensors.torch.safe_open(checkpoint_path, framework="pt", device=optimal_device) as f:
             for key in keys_to_load:
                 target_device = self._get_tensor_device(key, device_map)
-
-                # Load tensor
                 tensor = f.get_tensor(key)
 
-                # Move to target device if needed
-                if target_device != "cpu":
+                # Move to different device if tensor target differs from bulk load device
+                if str(target_device) != str(optimal_device):
                     if dtype is not None and tensor.dtype != dtype:
                         tensor = tensor.to(device=target_device, dtype=dtype, non_blocking=True)
                     else:
@@ -604,8 +631,9 @@ class ParallelAsyncLazyLoadingStrategy(LoadingStrategy):
 
         state_dict = {}
 
-        # Open file once and load multiple tensors
-        with safetensors.torch.safe_open(shard_file, framework="pt", device="cpu") as f:
+        # Open file once and load multiple tensors — load to optimal device to avoid CPU spike
+        optimal_device = self._get_optimal_device(device_map)
+        with safetensors.torch.safe_open(shard_file, framework="pt", device=optimal_device) as f:
             # If no specific keys, load all
             keys_to_load = tensor_keys if tensor_keys else list(f.keys())
 
@@ -617,8 +645,8 @@ class ParallelAsyncLazyLoadingStrategy(LoadingStrategy):
                     # Load tensor directly
                     tensor = f.get_tensor(key)
 
-                    # Move to target device if needed
-                    if target_device != "cpu":
+                    # Move to different device if tensor target differs from bulk load device
+                    if str(target_device) != str(optimal_device):
                         if dtype and tensor.dtype != dtype:
                             tensor = tensor.to(device=target_device, dtype=dtype, non_blocking=True)
                         else:
@@ -760,37 +788,7 @@ class FastSingleFileStrategy(LoadingStrategy):
 
         return state_dict
 
-    def _get_optimal_device(
-        self,
-        device_map: Optional[Union[str, Dict[str, str]]]
-    ) -> str:
-        """
-        Determine optimal device for direct loading.
-
-        Priority:
-        1. If device_map specifies single device → use it
-        2. If CUDA available → use cuda:0
-        3. Fallback → cpu
-        """
-        # Check device_map
-        if device_map:
-            if isinstance(device_map, str):
-                # Simple string like "cuda" or "cuda:0"
-                if device_map not in ["auto", "balanced", "sequential"]:
-                    return device_map
-            elif isinstance(device_map, dict):
-                # Dict like {"": "cuda:0"}
-                devices = set(device_map.values())
-                if len(devices) == 1:
-                    device = list(devices)[0]
-                    if device not in ["cpu", "disk"]:
-                        return device
-
-        # Auto-detect: prefer GPU if available
-        if torch.cuda.is_available():
-            return "cuda:0"
-
-        return "cpu"
+    # _get_optimal_device inherited from base LoadingStrategy
 
 
 class StreamingLoadingStrategy(LoadingStrategy):
@@ -873,10 +871,11 @@ class StreamingLoadingStrategy(LoadingStrategy):
         device_map: Optional[Union[str, Dict[str, str]]],
         dtype: Optional[torch.dtype],
     ) -> Dict[str, torch.Tensor]:
-        """Load a single shard"""
+        """Load a single shard directly to optimal device"""
         import safetensors.torch
 
-        return safetensors.torch.load_file(shard_file, device="cpu")
+        target = self._get_optimal_device(device_map)
+        return safetensors.torch.load_file(shard_file, device=target)
 
     def _initialize_model_shard(
         self, model: torch.nn.Module, state_dict: Dict[str, torch.Tensor], device_map: Dict[str, str]

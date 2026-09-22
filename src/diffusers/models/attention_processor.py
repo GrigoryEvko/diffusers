@@ -551,6 +551,9 @@ class Attention(nn.Module):
             self._modules.pop("processor")
 
         self.processor = processor
+        # `forward` reads these names and does not call `inspect.signature` on each call. Under torch.compile that
+        # call causes a graph break. Change the processor only through `set_processor`, or the names become incorrect.
+        self._processor_params = set(inspect.signature(processor.__call__).parameters.keys())
 
     def get_processor(self, return_deprecated_lora: bool = False) -> "AttentionProcessor":
         r"""
@@ -593,15 +596,7 @@ class Attention(nn.Module):
         # here we simply pass along all tensors to the selected processor class
         # For standard processors that are defined here, `**cross_attention_kwargs` is empty
 
-        attn_parameters = set(inspect.signature(self.processor.__call__).parameters.keys())
-        quiet_attn_parameters = {"ip_adapter_masks", "ip_hidden_states"}
-        unused_kwargs = [
-            k for k, _ in cross_attention_kwargs.items() if k not in attn_parameters and k not in quiet_attn_parameters
-        ]
-        if len(unused_kwargs) > 0:
-            logger.warning(
-                f"cross_attention_kwargs {unused_kwargs} are not expected by {self.processor.__class__.__name__} and will be ignored."
-            )
+        attn_parameters = self._processor_params
         cross_attention_kwargs = {k: w for k, w in cross_attention_kwargs.items() if k in attn_parameters}
 
         return self.processor(

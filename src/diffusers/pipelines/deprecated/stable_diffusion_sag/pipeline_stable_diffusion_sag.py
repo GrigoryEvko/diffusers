@@ -770,7 +770,7 @@ class StableDiffusionSAGPipeline(
         # 7. Denoising loop
         original_attn_proc = self.unet.attn_processors
         store_processor = CrossAttnStoreProcessor()
-        self.unet.mid_block.attentions[0].transformer_blocks[0].attn1.processor = store_processor
+        self.unet.mid_block.attentions[0].transformer_blocks[0].attn1.set_processor(store_processor)
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
 
         map_size = None

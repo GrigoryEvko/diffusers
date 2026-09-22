@@ -26,6 +26,7 @@ import torch.nn as nn
 from huggingface_hub import model_info
 from huggingface_hub.constants import HF_HUB_OFFLINE
 
+from ..models.model_loading_utils import _resolve_load_device
 from ..models.modeling_utils import ModelMixin, load_state_dict
 from ..utils import (
     USE_PEFT_BACKEND,
@@ -217,8 +218,9 @@ def _fetch_state_dict(
     weights did not come from a safetensors file — a state dict passed in memory, or a pickled checkpoint — since there
     is nowhere else for a header to live.
 
-    `device` is the device that the weights of a file load to. The weights load to the CPU when `device` is `None`. A
-    state dict passed in memory stays on its own device.
+    `device` is the device that the weights of a file load to. When `device` is `None`, the weights load to the current
+    CUDA device if CUDA is available, and to the CPU if it is not. A state dict passed in memory stays on its own
+    device.
     """
     file_metadata = None
     model_file = None
@@ -249,7 +251,7 @@ def _fetch_state_dict(
                     subfolder=subfolder,
                     user_agent=user_agent,
                 )
-                state_dict = safetensors.torch.load_file(model_file, device=device or "cpu")
+                state_dict = safetensors.torch.load_file(model_file, device=_resolve_load_device(device))
                 metadata = _load_sft_state_dict_metadata(model_file)
                 if return_file_metadata:
                     file_metadata = _load_sft_file_metadata(model_file)
@@ -280,7 +282,7 @@ def _fetch_state_dict(
                 subfolder=subfolder,
                 user_agent=user_agent,
             )
-            state_dict = load_state_dict(model_file, map_location=device or "cpu")
+            state_dict = load_state_dict(model_file, map_location=device)
             metadata = None
     else:
         state_dict = pretrained_model_name_or_path_or_dict

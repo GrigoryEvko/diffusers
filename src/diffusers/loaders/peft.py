@@ -248,7 +248,9 @@ class PeftAdapterMixin:
                 network_alphas,
                 metadata,
                 rank,
-                model_state_dict=self.state_dict(),
+                # `get_peft_kwargs` does not read `model_state_dict`. `self.state_dict()` makes a map of all the
+                # weights of the model, which is not necessary.
+                model_state_dict=None,
                 adapter_name=adapter_name,
             )
 

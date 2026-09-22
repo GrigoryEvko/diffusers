@@ -82,7 +82,7 @@ class PAGMixin:
                 raise ValueError(f"Cannot find PAG layer to set attention processor for: {layer_id}")
 
             for module in target_modules:
-                module.processor = pag_attn_proc
+                module.set_processor(pag_attn_proc)
 
     def _get_pag_scale(self, t):
         r"""

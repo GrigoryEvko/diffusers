@@ -30,7 +30,7 @@ from ..models.embeddings import (
     IPAdapterPlusImageProjection,
     MultiIPAdapterImageProjection,
 )
-from ..models.model_loading_utils import load_model_dict_into_meta
+from ..models.model_loading_utils import _resolve_load_device, load_model_dict_into_meta
 from ..models.modeling_utils import _LOW_CPU_MEM_USAGE_DEFAULT, load_state_dict
 from ..utils import (
     _get_model_file,
@@ -155,7 +155,7 @@ class UNet2DConditionLoadersMixin:
                         subfolder=subfolder,
                         user_agent=user_agent,
                     )
-                    state_dict = safetensors.torch.load_file(model_file, device="cpu")
+                    state_dict = safetensors.torch.load_file(model_file, device=_resolve_load_device(None))
                 except IOError as e:
                     if not allow_pickle:
                         raise e

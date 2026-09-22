@@ -151,22 +151,47 @@ def _determine_param_device(param_name: str, device_map: dict[str, int | str | t
         return device_map[module_name]
 
 
+def _resolve_load_device(device: str | int | torch.device | None = None) -> str:
+    """
+    Give the device string that a checkpoint loads to.
+
+    safetensors does not accept a `torch.device` object, and `torch.load` does not accept a device index. The
+    function gives a string that the two accept.
+
+    Args:
+        device: The device that the caller gives. `None` selects the current CUDA device if CUDA is available, and
+            the CPU if it is not. An integer is a CUDA device index
+
+    Returns:
+        A device string, for example "cpu" or "cuda:0"
+    """
+    if device is None:
+        return f"cuda:{torch.cuda.current_device()}" if torch.cuda.is_available() else "cpu"
+    if isinstance(device, int):
+        return f"cuda:{device}"
+    return str(device)
+
+
 def _get_load_device_from_device_map(
     device_map: str | dict[str, int | str | torch.device] | None,
-) -> str | int:
+) -> str:
     """
     Give the device that a checkpoint file loads to, before the weights go into the model.
 
     A device map that puts the full model on one device lets the checkpoint load directly to that device. This
     prevents a full copy of the weights in CPU memory. A string strategy, a map with more than one device, and the
-    "disk" and "meta" targets load to the CPU first.
+    "disk" and "meta" targets load to the CPU first. With no device map, the checkpoint loads to the current CUDA
+    device if CUDA is available. `load_model_dict_into_meta` then moves each weight to the CPU, as the device map
+    tells it.
 
     Args:
         device_map: The device map of `from_pretrained`, before or after `_determine_device_map`
 
     Returns:
-        A device string or a device index that `safetensors` and `torch.load` accept
+        A device string that `safetensors` and `torch.load` accept
     """
+    if device_map is None:
+        return _resolve_load_device(None)
     if not isinstance(device_map, dict):
         return "cpu"
 
@@ -175,10 +200,9 @@ def _get_load_device_from_device_map(
         return "cpu"
 
     device = next(iter(devices))
-    if isinstance(device, int):
-        return f"cuda:{device}" if torch.cuda.is_available() else "cpu"
-    # safetensors does not accept a `torch.device` object.
-    device = str(device)
+    if isinstance(device, int) and not torch.cuda.is_available():
+        return "cpu"
+    device = _resolve_load_device(device)
     if device in ("disk", "meta"):
         return "cpu"
     return device
@@ -187,11 +211,16 @@ def _get_load_device_from_device_map(
 def load_state_dict(
     checkpoint_file: str | os.PathLike,
     disable_mmap: bool = False,
-    map_location: str | torch.device = "cpu",
+    map_location: str | int | torch.device | None = None,
 ):
     """
     Reads a checkpoint file, returning properly formatted errors if they arise.
+
+    When `map_location` is `None`, the weights load to the current CUDA device if CUDA is available, and to the CPU
+    if it is not. This prevents a full copy of a large checkpoint in CPU memory.
     """
+    map_location = _resolve_load_device(map_location)
+
     # TODO: maybe refactor a bit this part where we pass a dict here
     if isinstance(checkpoint_file, dict):
         return checkpoint_file
@@ -199,7 +228,11 @@ def load_state_dict(
         file_extension = os.path.basename(checkpoint_file).split(".")[-1]
         if file_extension == SAFETENSORS_FILE_EXTENSION:
             if disable_mmap:
-                return safetensors.torch.load(open(checkpoint_file, "rb").read())
+                state_dict = safetensors.torch.load(open(checkpoint_file, "rb").read())
+                # `safetensors.torch.load` gives CPU tensors.
+                if str(map_location) != "cpu":
+                    state_dict = {k: v.to(map_location) for k, v in state_dict.items()}
+                return state_dict
             else:
                 return safetensors.torch.load_file(checkpoint_file, device=map_location)
         elif file_extension == GGUF_FILE_EXTENSION:
