@@ -26,6 +26,7 @@ from zipfile import is_zipfile
 
 import safetensors
 import torch
+from huggingface_hub.constants import HF_HUB_OFFLINE
 from huggingface_hub.utils import EntryNotFoundError
 
 from ..quantizers import DiffusersQuantizer
@@ -36,6 +37,7 @@ from ..utils import (
     SAFETENSORS_FILE_EXTENSION,
     WEIGHTS_INDEX_NAME,
     _add_variant,
+    _get_checkpoint_shard_files,
     _get_model_file,
     deprecate,
     is_accelerate_available,
@@ -227,6 +229,60 @@ def load_safetensors_file(checkpoint_file: str | os.PathLike, device: str) -> di
     """
     backend = "mmap" if torch.device(device).type == "cpu" else "pread"
     return safetensors.torch.load_file(checkpoint_file, device=device, backend=backend)
+
+
+def load_component_state_dict(
+    pretrained_model_name_or_path: str | os.PathLike,
+    subfolder: str,
+    device: str | torch.device,
+    variant: str | None = None,
+    token: str | None = None,
+    weights_name: str = "model.safetensors",
+) -> dict[str, torch.Tensor]:
+    """
+    Read the safetensors weights of one pipeline component to `device`.
+
+    The component is a folder of a diffusers-layout repo, for example "text_encoder". Its weights are one
+    `weights_name` file, or the shards that `<weights_name>.index.json` names. Each file name has `variant` in it when
+    `variant` is given. Each file reads through `load_safetensors_file`, so a read to an accelerator maps no page of
+    the file into the process. transformers 5.17 opens its own checkpoints with the mmap backend, and it has no option
+    to change that. Give this state dict to `from_pretrained(None, config=..., state_dict=..., device_map=...)` of
+    transformers to load such a component with no file mapped. Complexity: one read of each file.
+
+    Args:
+        pretrained_model_name_or_path: A local directory in the diffusers layout, or a hub repo id
+        subfolder: The component folder, for example "text_encoder"
+        device: The device of the weights
+        variant: The weights variant, for example "fp16", or None
+        token: The hub token, or None. Not used for a local directory
+        weights_name: The weights file name without the variant. The preset value is the transformers name
+
+    Returns:
+        The tensors of all the weight files of the component, on `device`
+
+    Raises:
+        EnvironmentError: If the component has neither the weights file nor its index
+    """
+    hub_kwargs = {"subfolder": subfolder, "token": token, "local_files_only": HF_HUB_OFFLINE}
+    try:
+        index_file = _get_model_file(
+            pretrained_model_name_or_path,
+            weights_name=_add_variant(f"{weights_name}.index.json", variant),
+            **hub_kwargs,
+        )
+    except EnvironmentError:
+        files = [
+            _get_model_file(
+                pretrained_model_name_or_path, weights_name=_add_variant(weights_name, variant), **hub_kwargs
+            )
+        ]
+    else:
+        files, _ = _get_checkpoint_shard_files(pretrained_model_name_or_path, index_file, **hub_kwargs)
+    device = str(torch.device(device))
+    state_dict = {}
+    for file in files:
+        state_dict.update(load_safetensors_file(file, device))
+    return state_dict
 
 
 def load_state_dict(
