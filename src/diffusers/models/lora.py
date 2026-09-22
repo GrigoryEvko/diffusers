@@ -36,11 +36,41 @@ if is_transformers_available():
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
+def _clip_text_encoder_layers(text_encoder: nn.Module) -> nn.ModuleList:
+    """
+    Give the encoder layers of a CLIP text encoder.
+
+    transformers 4 wraps the layers of `CLIPTextModel` in a `text_model` attribute. transformers 5 removed that wrapper
+    from `CLIPTextModel`, but `CLIPTextModelWithProjection` keeps it. The function supports the two layouts.
+
+    Args:
+        text_encoder: A `CLIPTextModel` or a `CLIPTextModelWithProjection`
+
+    Returns:
+        The `encoder.layers` module list of the text encoder
+    """
+    text_model = getattr(text_encoder, "text_model", text_encoder)
+    return text_model.encoder.layers
+
+
 def text_encoder_attn_modules(text_encoder: nn.Module):
+    """
+    Give the self-attention module of each encoder layer of a CLIP text encoder.
+
+    Each name is the checkpoint key prefix of the module, for example `text_model.encoder.layers.0.self_attn`. The name
+    is the same for the transformers 4 layout and the transformers 5 layout, because LoRA checkpoints use it as a key.
+    It is not always the module path: without the `text_model` wrapper, the module path has no `text_model.` prefix.
+
+    Args:
+        text_encoder: A `CLIPTextModel` or a `CLIPTextModelWithProjection`
+
+    Returns:
+        A list of `(name, module)` tuples, one for each encoder layer
+    """
     attn_modules = []
 
     if isinstance(text_encoder, (CLIPTextModel, CLIPTextModelWithProjection)):
-        for i, layer in enumerate(text_encoder.text_model.encoder.layers):
+        for i, layer in enumerate(_clip_text_encoder_layers(text_encoder)):
             name = f"text_model.encoder.layers.{i}.self_attn"
             mod = layer.self_attn
             attn_modules.append((name, mod))
@@ -51,10 +81,22 @@ def text_encoder_attn_modules(text_encoder: nn.Module):
 
 
 def text_encoder_mlp_modules(text_encoder: nn.Module):
+    """
+    Give the MLP module of each encoder layer of a CLIP text encoder.
+
+    Each name is the checkpoint key prefix of the module, for example `text_model.encoder.layers.0.mlp`. Refer to
+    `text_encoder_attn_modules` for the two layouts of transformers.
+
+    Args:
+        text_encoder: A `CLIPTextModel` or a `CLIPTextModelWithProjection`
+
+    Returns:
+        A list of `(name, module)` tuples, one for each encoder layer
+    """
     mlp_modules = []
 
     if isinstance(text_encoder, (CLIPTextModel, CLIPTextModelWithProjection)):
-        for i, layer in enumerate(text_encoder.text_model.encoder.layers):
+        for i, layer in enumerate(_clip_text_encoder_layers(text_encoder)):
             mlp_mod = layer.mlp
             name = f"text_model.encoder.layers.{i}.mlp"
             mlp_modules.append((name, mlp_mod))

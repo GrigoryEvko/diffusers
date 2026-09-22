@@ -38,10 +38,12 @@ if is_transformers_available():
         )
         from transformers import CLIPTextModel, CLIPTextModelWithProjection
 
+        from ..models.lora import _clip_text_encoder_layers
+
         attn_modules = []
 
         if isinstance(text_encoder, (CLIPTextModel, CLIPTextModelWithProjection)):
-            for i, layer in enumerate(text_encoder.text_model.encoder.layers):
+            for i, layer in enumerate(_clip_text_encoder_layers(text_encoder)):
                 name = f"text_model.encoder.layers.{i}.self_attn"
                 mod = layer.self_attn
                 attn_modules.append((name, mod))
